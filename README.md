@@ -1,2 +1,3 @@
 # DoorLock
-RDIF and WiFi controlled door lock
+RFID and WiFi controlled door lock based on ESP32.
+Documentation coming soon.
