@@ -1,7 +1,7 @@
 /*
   DL32 v1.1 by Mark Booth
   For use with DL32 hardware revision 1.1
-  Last updated 10/05/2021
+  Last updated 10/06/2021
 */
 
 // Include Libraries
@@ -50,14 +50,14 @@
 #define NUMPIXELS 1
 
 //debug
-#define codeVersion 20210510
+#define codeVersion 20210610
 #define verboseMode 0
 
 //Hardcoded MQTT data (To be moved to JSON in SPIFFS)
-//const char* mqtt_server = "192.168.1.20"; // mqtt server IP address
-//const char* mqtt_cmnd_topic = "cmnd/lock32"; // topic for commands
-//const char* mqtt_stat_topic = "stat/lock32"; // topic for status
-//const char* mqtt_client_name = "lock32_client"; // mqtt client name
+const char* mqtt_server = "192.168.1.20"; // mqtt server IP address
+const char* mqtt_cmnd_topic = "cmnd/lock32"; // topic for commands
+const char* mqtt_stat_topic = "stat/lock32"; // topic for status
+const char* mqtt_client_name = "lock32_client"; // mqtt client name
 
 long lastMQTTReconnectAttempt = 0;
 long lastMsg = 0;
@@ -414,6 +414,12 @@ void unlock(int secs) {
   MQTTclient.publish(mqtt_stat_topic, "unlocked");
   setLEDColor(2);
   unlockBeep();
+  //If "secs" is zero, leave unlocked indefinitely
+  if (secs == 0) {
+    persistUnlockBeep();
+    Serial.println("Unlocked indefinateley");
+    return;
+  }
   while (loops < secs) {
     if (digitalRead(exitButton) == LOW) {
       count++;
@@ -432,7 +438,6 @@ void unlock(int secs) {
     shortBeep();
   }
 }
-
 //Check magnetic sensor for open/closed door state (Optional)
 void checkMagSensor() {
   if (doorSensorConnected == true) {
@@ -648,6 +653,13 @@ void unlockBeep() {
   delay(100);
   digitalWrite(buzzer, HIGH);
   delay(100);
+  digitalWrite(buzzer, LOW);
+}
+
+// Play unlock tone
+void persistUnlockBeep() {
+  digitalWrite(buzzer, HIGH);
+  delay(1000);
   digitalWrite(buzzer, LOW);
 }
 
@@ -963,7 +975,7 @@ void startMQTTConnection() {
   mqtt_port = json["mqtt_port"];
   const char* mqtt_server = json["mqtt_server"];
   configFile.close();
-  MQTTclient.setServer("192.168.1.123", 1883);
+  MQTTclient.setServer("192.168.1.20", 1883);
   MQTTclient.setCallback(MQTTcallback);
   delay(100);
   lastMQTTReconnectAttempt = 0;
@@ -1022,6 +1034,10 @@ void MQTTcallback(char* topic, byte* payload, unsigned int length) {
     Serial.println("Bell via MQTT");
     MQTTclient.publish(mqtt_stat_topic, "Bell rung via MQTT");
     bellBeep();
+  } else if ((char)payload[0] == 'p') {
+    Serial.println("Unlocked persistently via MQTT");
+    MQTTclient.publish(mqtt_stat_topic, "lock opened persistently via MQTT");
+    unlock(0);
   } else {
     Serial.println("");
     Serial.print("Message not recognized: ");
