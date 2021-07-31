@@ -978,6 +978,7 @@ void startMQTTConnection() {
   MQTTclient.setServer("192.168.1.20", 1883);
   MQTTclient.setCallback(MQTTcallback);
   delay(100);
+  MQTTclient.publish(mqtt_stat_topic, "locked", true);
   lastMQTTReconnectAttempt = 0;
 }
 
