@@ -1,5 +1,5 @@
 # DL32 - The ESP32 powered smart door lock.
 
-RFID and WiFi controlled door lock based on ESP32.
+--- NO LONGER MAINTAINED - Please refer to the newer MicroPython release ---
 
-Documentation coming soon.
+RFID and WiFi controlled door lock based on ESP32.
