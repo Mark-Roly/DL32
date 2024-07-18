@@ -1,260 +1,455 @@
 /*
-  DL32 v1.1 by Mark Booth
-  For use with DL32 hardware revision 1.1
-  Last updated 10/06/2021
+
+  DL32 v3 by Mark Booth
+  For use with DL32 S3
+  Last updated 18/07/2024
+
+  Upload settings:
+    Upload speed 921600
+    USB Mode : Hardware CDC and JTAG
+    USB CDC on Boot : Enabled
+    USB Firmware MSC : disabled
+    USB DFU on boot : disabled
+    Upload Mode: UART0/Hardware CDC
+    CPU frequency 240Mhz
+    Partition scheme: Default 4mb with ffat
+    
 */
 
 // Include Libraries
+#include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include <Wiegand.h>
-#include <NeoPixelBus.h>
+#include <Adafruit_NeoPixel.h>
 #include <WebServer.h>
-#include <ArduinoJson.h>
 #include <SPI.h>
+#include <Wiegand.h>
+#include <ArduinoJson.h>
+#include <LittleFS.h>
+#include <Ticker.h>
+#include "FFat.h"
 #include "FS.h"
-#include "SPIFFS.h"
-#include <SD.h>
+#include "SD.h"
 
-//1.0 Pins - Uncomment if using board revision 1.0
-//#define buzzer 5
-//#define bellButton 18
-//#define lockRelay 23
-//#define exitButton 19
-//#define progButton 12
-//#define wiegand0 25
-//#define wiegand1 26
-//#define neopin 21
-//#define NUMPIXELS 1
+// 3.0 Pins - Uncomment if using S3 Wemos board revision
+#define buzzer_pin 14
+#define neopix_pin 11
+#define ob_neopix_pin 47
+#define lockRelay_pin 1
+#define AUXButton_pin 6
+#define exitButton_pin 21
+#define bellButton_pin 17
+#define magSensor_pin 15
+#define wiegand_0_pin 16
+#define wiegand_1_pin 18
+#define DS01 33
+#define DS02 37
+#define DS03 5
+#define DS04 10
+#define GH01 2
+#define GH02 4
+#define GH03 12
+#define GH04 13
+#define GH05 8
+#define GH06 9
+#define SD_CS_PIN 34
+#define SD_CLK_PIN 38
+#define SD_MOSI_PIN 36
+#define SD_MISO_PIN 35
 
-//1.1 Pins - Uncomment if using board revision 1.1
-#define buzzer 14
-#define bellButton 33
-#define lockRelay 27
-#define exitButton 32
-#define progButton 12
-#define wiegand0 25
-#define wiegand1 26
-#define neopin 21
-#define magSensor 22
+// Define struct for storing configuration
+struct Config {
+  char ssid[32];
+  char wifi_password[32];
+  char mqtt_enabled[8];
+  char mqtt_server[32];
+  char mqtt_port[8];
+  char mqtt_cmnd_topic[32];
+  char mqtt_stat_topic[32];
+  char mqtt_client_name[32];
+  char mqtt_auth[8];
+  char mqtt_user[32];
+  char mqtt_password[32];
+};
 
-//Durations for each unlock type (eg: unlock for 10 seconds if unclocked via MQTT)
+// sd card pins:
+// 3.0 SD card Pins
+// CD DAT3 CS 34
+// CMD DI DIN MOSI 36
+// CLK SCLK 38
+// DAT0 D0 MISO 35
+
+// Durations for each unlock type (eg: unlock for 10 seconds if unlocked via MQTT)
 #define exitButDur 5
 #define httpDur 5
-#define tagDur 10
+#define keyDur 5
 #define mqttDur 10
 #define addKeyDur 10
 #define unrecognizedKeyDur 5
+#define WDT_TIMEOUT 60
 
-//Number of neopixels used
+// Number of neopixels used
 #define NUMPIXELS 1
 
-//debug
-#define codeVersion 20210610
-#define verboseMode 0
+// debug
+#define codeVersion 20240718
 
-//Hardcoded MQTT data (To be moved to JSON in SPIFFS)
-const char* mqtt_server = "192.168.1.20"; // mqtt server IP address
-const char* mqtt_cmnd_topic = "cmnd/lock32"; // topic for commands
-const char* mqtt_stat_topic = "stat/lock32"; // topic for status
-const char* mqtt_client_name = "lock32_client"; // mqtt client name
-
-long lastMQTTReconnectAttempt = 0;
 long lastMsg = 0;
 long disconCount = 0;
 char msg[50];
 int value = 0;
-int idlcol = 4;
-String pageContent = "";
-boolean SPIFFS_present = false;
+int add_count = 0;
+String scannedKey = "";
+
+boolean validKeyRead = false;
+boolean forceOffline = false;
+boolean forceSilent = false;
+boolean invalidKeyRead = false;
 boolean SD_present = false;
-boolean doorOpen = false;
-boolean doorSensorConnected = false;
+boolean FFat_present = false;
+boolean doorOpen = true;
+boolean add_mode = false;
+String serialCmd;
 
-NeoPixelBus<NeoRgbFeature, Neo800KbpsMethod> APA106(NUMPIXELS, neopin);
-RgbColor red(16, 0, 0);
-RgbColor green(0, 16, 0);
-RgbColor blue(0, 0, 16);
-RgbColor amber(12, 8, 0);
-RgbColor purple(8, 0, 8);
-RgbColor yellow (8, 8, 0);
-RgbColor black(0);
+String pageContent = "";
+const char* config_filename = "/dl32.json";
+const char* keys_filename = "/keys.txt";
 
-HslColor hslRed(red);
-HslColor hslGreen(green);
-HslColor hslBlue(blue);
-HslColor hslAmber(amber);
-HslColor hslPurple(purple);
-HslColor hslYellow(yellow);
-HslColor hslBlack(black);
+// buzzer settings
+int freq = 2000;
+int channel = 0;
+int resolution = 8;
 
+// integer for watchdog counter
+volatile int watchdogCount = 0;
+
+// Define onboard and offvoard neopixels
+Adafruit_NeoPixel pixel = Adafruit_NeoPixel(NUMPIXELS, neopix_pin, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel ob_pixel = Adafruit_NeoPixel(NUMPIXELS, ob_neopix_pin, NEO_GRB + NEO_KHZ800);
+
+// instantiate objects for Configuration struct, wifi client, webserver, mqtt client, qiegand reader and WDT timer
+Config config;
 WiFiClient esp32Client;
+WebServer webServer(80);
 PubSubClient MQTTclient(esp32Client);
-WIEGAND wg;
-WebServer DL32server(80);
+Wiegand wiegand;
+Ticker secondTick;
 
-// --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions ---
+// counter for mqtt reconnection attempts
+long lastMQTTReconnectAttempt = 0;
 
-int connectWifi() {
-  if (!loadFSJSON()) {
-    Serial.println("Failed to load config");
-  } else {
-    Serial.println("Config loaded");
+// --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions ---
 
-    // Connect to WiFi network using details stored on SPIFFS
-    File configFile = SPIFFS.open("/DL32.json", "r");
 
-    size_t size = configFile.size();
+void ISRwatchdog() {
+  watchdogCount++;
+  if (watchdogCount == WDT_TIMEOUT) {
+    Serial.println("Watchdog invoked!");
+    ESP.restart();
+  }
+}
 
-    std::unique_ptr<char[]> buf(new char[size]);
-    configFile.readBytes(buf.get(), size);
-    StaticJsonBuffer<200> jsonBuffer;
-    JsonObject& json = jsonBuffer.parseObject(buf.get());
+// --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions ---
 
-    const char* FS_ssid = json["ssid"];
-    const char* FS_wifi_password = json["wifi_password"];
-
-    configFile.close();
-
-    Serial.print("Connecting to ");
-    Serial.println(FS_ssid);
-    //Serial.print("with password ");
-    //Serial.println(FS_wifi_password);
-
-    WiFi.begin(FS_ssid, FS_wifi_password);
-
-    int retries = 0;
-    while ((WiFi.status() != WL_CONNECTED) && (retries < 10)) {
-      retries++;
-      delay(500);
-      Serial.print(F("."));
+// function that checks if a provided key is present in the authorized list
+boolean keyAuthorized(String key) {
+  File keysFile = FFat.open(keys_filename, "r");
+  int charMatches = 0;
+  char tagBuffer[11];
+  Serial.print("key: ");
+  Serial.println(key);
+  while (keysFile.available()) {
+    int cardDigits = keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer));
+    //Serial.print("card digits = ");
+    //Serial.println(String(cardDigits));
+    tagBuffer[cardDigits] = 0;
+    charMatches = 0;
+    for (int loopCount = 0; loopCount < (cardDigits - 1); loopCount++) {
+      //Serial.print("comparing ");
+      //Serial.print(key[loopCount]);
+      //Serial.print(" with ");
+      //Serial.println(tagBuffer[loopCount]);
+      if (key[loopCount] == tagBuffer[loopCount]) {
+        charMatches++;
+      }
+    }
+    if (charMatches == cardDigits - 1) {
+      //Serial.print(tagBuffer);
+      //Serial.print(" - ");
+      //Serial.println("MATCH");
+      //matchedCards++;
+      return true;
+    } else {
+      //Serial.println("NO MATCH");
     }
   }
-  Serial.println("");
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print(F("Connected to WIFI SSID "));
-    Serial.print(WiFi.SSID());
-    Serial.print(F(" with IP: "));
-    Serial.println(WiFi.localIP());
-    idlcol = 3;
-    startWebServer();
-    startMQTTConnection();
-  }
-  else {
-    Serial.println(F("Not connected to Network."));
-    idlcol = 4;
-    setLEDColor(idlcol);
-  }
+  keysFile.close();
+  return false;
 }
 
-// --- LED Functions --- LED Functions --- LED Functions --- LED Functions --- LED Functions --- LED Functions ---
-
-// 1=Red, 2=Green, 3=Blue, 4=Amber, 5=Purple else=Off
-void setLEDColor(int colour) {
-  if (colour == 1) {
-    APA106.SetPixelColor(0, hslRed);
-    APA106.Show();
-    //Serial.println("LED Red");
+// Polled function to check if a key has been recently read
+void checkKey() {
+  noInterrupts();
+  wiegand.flush();
+  interrupts();
+  if (scannedKey == "") {
     return;
-  } else if (colour == 2) {
-    APA106.SetPixelColor(0, hslGreen);
-    APA106.Show();
-    //Serial.println("LED Green");
-    return;
-  } else if (colour == 3) {
-    APA106.SetPixelColor(0, hslBlue);
-    APA106.Show();
-    //Serial.println("LED Blue");
-    return;
-  } else if (colour == 4) {
-    APA106.SetPixelColor(0, hslAmber);
-    APA106.Show();
-    //Serial.println("LED Amber");
-    return;
-  } else if (colour == 5) {
-    APA106.SetPixelColor(0, hslPurple);
-    APA106.Show();
-    //Serial.println("LED Purple");
-    return;
-  } else if (colour == 6) {
-    APA106.SetPixelColor(0, hslYellow);
-    APA106.Show();
-    //Serial.println("LED Yellow");
-    return;
+  }
+  bool match_found = keyAuthorized(scannedKey);
+  if ((match_found == false) and (add_mode)) {
+    appendlnFile(FFat, keys_filename, scannedKey.c_str());
+    add_mode = false;
+    Serial.print("Added key ");
+    Serial.print(scannedKey);
+    Serial.println(" to authorized list");
+  } else if (match_found and (add_mode)) {
+    add_mode = false;
+    Serial.print("Key ");
+    Serial.print(scannedKey);
+    Serial.println(" is already authorized!");
+  } else if (match_found and (add_mode == false)) {
+    Serial.print("Key ");
+    Serial.print(scannedKey);
+    Serial.println(" is authorized!");
+    unlock(keyDur);
   } else {
-    //Serial.println("LED Off");
+    add_mode = false;
+    Serial.println("Unauthorized Key!");
+    setPixRed();
+    playUnauthorizedTone();
+    delay(1000);
+    setPixBlue();
+  }
+  scannedKey = "";
+  return;
+}
+
+// When any of the pins have changed, update the state of the wiegand library
+void pinStateChanged() {
+  wiegand.setPin0State(digitalRead(wiegand_0_pin));
+  wiegand.setPin1State(digitalRead(wiegand_1_pin));
+}
+
+// Notifies when a reader has been connected or disconnected.
+// Instead of a message, the seconds parameter can be anything you want -- Whatever you specify on `wiegand.onStateChange()`
+void stateChanged(bool plugged, const char* message) {
+  Serial.print(message);
+  Serial.println(plugged ? "CONNECTED" : "DISCONNECTED");
+}
+
+// IRQ function for read cards
+void receivedData(uint8_t* data, uint8_t bits, const char* message) {
+  String key = "";
+  add_count = (addKeyDur * 100);
+  //Print value in HEX
+  uint8_t bytes = (bits+7)/8;
+  for (int i=0; i<bytes; i++) {
+    String FirstNum = (String (data[i] >> 4, 16));
+    String SecondNum = (String (data[i] & 0xF, 16));
+    key = (key + FirstNum + SecondNum);
+  }
+  scannedKey = key;
+  scannedKey.toUpperCase();
+  return;
+}
+
+// Notifies when an invalid transmission is detected
+void receivedDataError(Wiegand::DataError error, uint8_t* rawData, uint8_t rawBits, const char* message) {
+  Serial.print(message);
+  Serial.print(Wiegand::DataErrorStr(error));
+  Serial.print(" - Raw data: ");
+  Serial.print(rawBits);
+  Serial.print("bits / ");
+  //Print value in HEX
+  uint8_t bytes = (rawBits+7)/8;
+  for (int i=0; i<bytes; i++) {
+    Serial.print(rawData[i] >> 4, 16);
+    Serial.print(rawData[i] & 0xF, 16);
+  }
+  Serial.println();
+}
+
+// --- SD Functions --- SD Functions --- SD Functions --- SD Functions --- SD Functions --- SD Functions --- SD Functions ---
+
+void sd_setup() {
+  SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+  if(!SD.begin(SD_CS_PIN)){
+    Serial.println("SD filesystem mount failed");
     return;
   }
+  Serial.println("SD filesystem successfully mounted");
+  SD_present = true;
 }
 
-// --- SPIFFS Functions --- SPIFFS Functions --- SPIFFS Functions --- SPIFFS Functions --- SPIFFS Functions --- SPIFFS Functions ---
+// --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions ---
 
-bool loadFSJSON() {
-  File configFile = SPIFFS.open("/DL32.json", "r");
-  if (!configFile) {
-    Serial.println("Failed to open config file");
-    return false;
+void fatfs_setup() {
+  if(!FFat.begin(true)){
+    Serial.println("FFAT filesystem mount failed");
+    return;
   }
-
-  size_t size = configFile.size();
-  if (size > 1024) {
-    Serial.println("Config file is too large");
-    return false;
-  }
-
-  std::unique_ptr<char[]> buf(new char[size]);
-  configFile.readBytes(buf.get(), size);
-  StaticJsonBuffer<200> jsonBuffer;
-  JsonObject& json = jsonBuffer.parseObject(buf.get());
-  if (json.success()) {
-    Serial.println("SPIFFS JSON successfully parsed");
-    configFile.close();
-    return true;
-  }
-  else {
-    Serial.println("SPIFFS JSON parse FAILED!");
-    configFile.close();
-    return false;
-  }
-  return true;
+  Serial.println("FFAT filesystem successfully mounted");
+  FFat_present = true;
 }
 
-void listDir(fs::FS &fs, const char * dirname, uint8_t levels) {
-  Serial.printf("Listing directory: %s\r\n", dirname);
-
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
+  Serial.printf("Listing directory: %s... ", dirname);
   File root = fs.open(dirname);
-  if (!root) {
-    Serial.println("- failed to open directory");
+  if(!root){
+    Serial.println("failed to open directory");
     return;
   }
-  if (!root.isDirectory()) {
-    Serial.println(" - not a directory");
+  if(!root.isDirectory()){
+    Serial.println("not a directory");
     return;
   }
-
   File file = root.openNextFile();
-  while (file) {
-    if (file.isDirectory()) {
+  while(file){
+    if(file.isDirectory()){
       Serial.print("  DIR : ");
       Serial.println(file.name());
-      if (levels) {
-        listDir(fs, file.name(), levels - 1);
+      if(levels){
+        listDir(fs, file.path(), levels -1);
       }
     } else {
-      Serial.print("  File name: ");
+      Serial.print("  FILE: ");
       Serial.print(file.name());
-      Serial.print(" File size: ");
+      Serial.print("\tSIZE: ");
       Serial.println(file.size());
     }
     file = root.openNextFile();
   }
-  Serial.println("");
 }
 
-void configSDtoSPIFFS() {
-  if ((SD_present == true) && (SD.exists("/DL32.json"))) {
-    File sourceFile = SD.open("/DL32.json");
-    File destFile = SPIFFS.open("/DL32.json", FILE_WRITE);
+void readFile(fs::FS &fs, const char * path){
+  Serial.printf("Reading file: %s... ", path);
+  File file = fs.open(path);
+  if(!file || file.isDirectory()){
+    Serial.println("failed to open file for reading");
+    return;
+  }
+  Serial.println("- read from file:");
+  while(file.available()){
+    Serial.write(file.read());
+  }
+  file.close();
+}
+
+void writeFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Writing file: %s... ", path);
+
+    File file = fs.open(path, FILE_WRITE);
+    if(!file){
+        Serial.println("failed to open file for writing");
+        return;
+    }
+    if(file.print(message)){
+        Serial.println("file written");
+    } else {
+        Serial.println("write failed");
+    }
+    file.close();
+}
+
+void appendFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Appending to file: %s... ", path);
+
+    File file = fs.open(path, FILE_APPEND);
+    if(!file){
+        Serial.println("- failed to open file for appending");
+        return;
+    }
+    if(file.print(message)){
+        Serial.println("message appended");
+    } else {
+        Serial.println("append failed");
+    }
+    file.close();
+}
+
+void appendlnFile(fs::FS &fs, const char * path, const char * message){
+    //Serial.printf("Appending line to file: %s... ", path);
+
+    File file = fs.open(path, FILE_APPEND);
+    if(!file){
+        Serial.println("- failed to open file for appending line");
+        return;
+    }
+    if(file.println(message)){
+        //Serial.println("message line appended");
+    } else {
+        Serial.println("append line failed");
+    }
+    file.close();
+}
+
+void renameFile(fs::FS &fs, const char * path1, const char * path2){
+  Serial.printf("Renaming file %s to %s... ", path1, path2);
+  if (fs.rename(path1, path2)) {
+    Serial.println("file renamed");
+  } else {
+    Serial.println("rename failed");
+  }
+}
+
+void deleteFile(fs::FS & fs, const char * path) {
+  Serial.printf("Deleting file: %s...", path);
+  if (fs.remove(path)) {
+    Serial.println("file deleted");
+  } else {
+    Serial.println("delete failed");
+  }
+}
+
+void createDir(fs::FS & fs, const char * path) {
+  Serial.printf("Creating Dir: %s\n", path);
+  if (fs.mkdir(path)) {
+    Serial.println("Dir created");
+  } else {
+    Serial.println("mkdir failed");
+  }
+}
+
+void removeDir(fs::FS & fs, const char * path) {
+  Serial.printf("Removing Dir: %s\n", path);
+  if (fs.rmdir(path)) {
+    Serial.println("Dir removed");
+  } else {
+    Serial.println("rmdir failed");
+  }
+}
+
+// Loads the configuration from a file
+void loadFSJSON(const char* config_filename, Config& config) {
+  // Open file for reading
+  File file = FFat.open(config_filename);
+
+  // Allocate a temporary JsonDocument
+  JsonDocument doc;
+
+  // Deserialize the JSON document
+  DeserializationError error = deserializeJson(doc, file);
+  if (error) {
+    Serial.println(F("Failed to read file, using default configuration"));
+  }
+  strlcpy(config.ssid, doc["ssid"] | "null_ssid", sizeof(config.ssid));
+  strlcpy(config.wifi_password, doc["wifi_password"] | "null_wifi_password", sizeof(config.wifi_password));
+  strlcpy(config.mqtt_enabled, doc["mqtt_enabled"] | "false", sizeof(config.mqtt_enabled));
+  strlcpy(config.mqtt_server, doc["mqtt_server"] | "null_mqtt_server", sizeof(config.mqtt_server));
+  strlcpy(config.mqtt_port, doc["mqtt_port"] | "1883", sizeof(config.mqtt_port));
+  strlcpy(config.mqtt_cmnd_topic, doc["mqtt_cmnd_topic"] | "DEFAULT_dl32s3/cmnd", sizeof(config.mqtt_cmnd_topic));
+  strlcpy(config.mqtt_stat_topic, doc["mqtt_stat_topic"] | "DEFAULT_dl32s3/stat", sizeof(config.mqtt_stat_topic));
+  strlcpy(config.mqtt_client_name, doc["mqtt_client_name"] | "DEFAULT_dl32s3", sizeof(config.mqtt_client_name));
+  strlcpy(config.mqtt_auth, doc["mqtt_auth"] | "true", sizeof(config.mqtt_auth));
+  strlcpy(config.mqtt_user, doc["mqtt_user"] | "mqtt", sizeof(config.mqtt_user));
+  strlcpy(config.mqtt_password, doc["mqtt_password"] | "null_mqtt_password", sizeof(config.mqtt_password));
+  file.close();
+}
+
+void configSDtoFFat() {
+  if ((SD_present == true) && (SD.exists(config_filename))) {
+    File sourceFile = SD.open(config_filename);
+    File destFile = FFat.open(config_filename, FILE_WRITE);
     static uint8_t buf[1];
     while ( sourceFile.read( buf, 1) ) {
       destFile.write( buf, 1 );
@@ -264,13 +459,15 @@ void configSDtoSPIFFS() {
   } else {
     Serial.println("");
     Serial.println("No SD Card Mounted or no such file");
+    return;
   }
+  Serial.println("Config file successfuly copied from SD to FFat");
 }
 
-void addressingSDtoSPIFFS() {
+void addressingSDtoFS() {
   if ((SD_present == true) && (SD.exists("/addressing.json"))) {
     File sourceFile = SD.open("/addressing.json");
-    File destFile = SPIFFS.open("/addressing.json", FILE_WRITE);
+    File destFile = FFat.open("/addressing.json", FILE_WRITE);
     static uint8_t buf[1];
     while ( sourceFile.read( buf, 1) ) {
       destFile.write( buf, 1 );
@@ -280,743 +477,328 @@ void addressingSDtoSPIFFS() {
   } else {
     Serial.println("");
     Serial.println("No SD Card Mounted or no such file");
-  }
-}
-
-void keysSDtoSPIFFS() {
-  if ((SD_present == true) && (SD.exists("/keys.txt"))) {
-    File sourceFile = SD.open("/keys.txt");
-    File destFile = SPIFFS.open("/keys.txt", FILE_WRITE);
-    static uint8_t buf[1];
-    while ( sourceFile.read( buf, 1) ) {
-      destFile.write( buf, 1 );
-    }
-    destFile.close();
-    sourceFile.close();
-  } else {
-    Serial.println("");
-    Serial.println("No SD Card Mounted or no such file");
-  }
-}
-
-void keysSPIFFStoSD() {
-  if ((SD_present == true) && (SPIFFS.exists("/keys.txt"))){
-    File sourceFile = SPIFFS.open("/keys.txt");
-    File destFile = SD.open("/keys.txt", FILE_WRITE);
-    static uint8_t buf[1];
-    while ( sourceFile.read( buf, 1) ) {
-      destFile.write( buf, 1 );
-    }
-    destFile.close();
-    sourceFile.close();
-  } else {
-    Serial.println("");
-    Serial.println("No SD Card Mounted or no such file");
-  }
-}
-
-void appendFile(fs::FS &fs, const char * path, const char * message) {
-  Serial.printf("Appending to file: %s\r\n", path);
-
-  File file = fs.open(path, FILE_APPEND);
-  if (!file) {
-    Serial.println("- failed to open file for appending");
     return;
   }
-  if (file.print(message)) {
-    Serial.println("- message appended");
+  Serial.println("Addressing file successfuly copied from SD to FFat");
+}
+
+void keysSDtoFFat() {
+  if ((SD_present == true) && (SD.exists(keys_filename))) {
+    File sourceFile = SD.open(keys_filename);
+    File destFile = FFat.open(keys_filename, FILE_WRITE);
+    static uint8_t buf[1];
+    while ( sourceFile.read( buf, 1) ) {
+      destFile.write( buf, 1 );
+    }
+    destFile.close();
+    sourceFile.close();
+    Serial.println("Keys file successfuly copied from SD to FFat");
   } else {
-    Serial.println("- append failed");
+    Serial.println("");
+    Serial.println("No SD Card Mounted or no such file");
+    return;
   }
 }
 
-void deleteFile(fs::FS &fs, const char * path) {
-  Serial.printf("Deleting file: %s\r\n", path);
-  if (fs.remove(path)) {
-    Serial.println("- file deleted");
+void keysFStoSD() {
+  if ((SD_present == true) && (FFat.exists(keys_filename))){
+    File sourceFile = FFat.open(keys_filename);
+    File destFile = SD.open(keys_filename, FILE_WRITE);
+    static uint8_t buf[1];
+    while ( sourceFile.read( buf, 1) ) {
+      destFile.write( buf, 1 );
+    }
+    destFile.close();
+    sourceFile.close();
+    Serial.println("Keys file successfuly copied from FFat to SD");
   } else {
-    Serial.println("- delete failed");
+    Serial.println("");
+    Serial.println("No SD Card Mounted or no such file");
+    return;
   }
 }
 
-//Function to add new key to allowed list
-void addKeyMode() {
-  Serial.println("");
+int addKeyMode() {
+  playAddModeTone();
   Serial.println("Add Key mode - Waiting for key");
-  setLEDColor(5);
-  int count = 0;
-  unsigned long code;
-  uint8_t wait = 10;
-  while (count < (addKeyDur * 100)) {
-    if (wg.available()) {
-      code = wg.getCode();
-      Serial.println("");
-      Serial.print("CARD UID: ");
-      Serial.print(wg.getCode());
-      Serial.print(", Type W");
-      Serial.println(wg.getWiegandType());
-      File keysFile = SPIFFS.open("/keys.txt", "a");
-      if (!keysFile) {
-        Serial.println("Failed to open keys.txt");
-        return;
-      }
-      keysFile.println(code);
-      keysFile.close();
-      //appendFile(SPIFFS, "/keys.txt", "\r\n");
-      Serial.print("Card added.");
-      Serial.println(code);
-      count = 1000;
-    }
-    count++;
+  add_count = 0;
+  add_mode = true;
+  while (add_count < (addKeyDur * 100) && add_mode) {
+    noInterrupts();
+    wiegand.flush();
+    interrupts();
     delay(10);
+    add_count++;
   }
-  Serial.println("Reading file: keys.txt");
-  File outFile = SPIFFS.open("/keys.txt");
-  while (outFile.available()) {
-    Serial.write(outFile.read());
+  if (scannedKey == "") {
+    add_mode = false;
+    Serial.println("No new key added");
   }
-  setLEDColor(3);
+  return 1;
 }
 
-void writeFile(fs::FS &fs, const char * path, const char * message) {
-  Serial.printf("Writing file: %s\r\n", path);
+// --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions ---
 
-  File file = fs.open(path, FILE_WRITE);
-  if (!file) {
-    Serial.println("- failed to open file for writing");
-    return;
-  }
-  if (file.print(message)) {
-    Serial.println("- file written");
-  } else {
-    Serial.println("- write failed");
-  }
+void setPixRed() {
+  pixel.setPixelColor(0, pixel.Color(10,0,0));
+  pixel.show();
 }
 
-// --- Lock Functions --- Lock Functions --- Lock Functions --- Lock Functions --- Lock Functions --- Lock Functions ---
+void setPixAmber() {
+  pixel.setPixelColor(0, pixel.Color(10,3,0));
+  pixel.show();
+}
 
-// Unlock the doorstrike for 'int' seconds
+void setPixGreen() {
+  pixel.setPixelColor(0, pixel.Color(0,10,0));
+  pixel.show();
+}
+
+void setPixPurple() {
+  pixel.setPixelColor(0, pixel.Color(10,0,10));
+  pixel.show();
+}
+
+void setPixBlue() {
+  pixel.setPixelColor(0, pixel.Color(0,0,10));
+  pixel.show();
+}
+
+void setOBPixRed() {
+  ob_pixel.setPixelColor(0, pixel.Color(0,10,0));
+  ob_pixel.show();
+}
+
+void setOBPixAmber() {
+  ob_pixel.setPixelColor(0, pixel.Color(10,3,0));
+  ob_pixel.show();
+}
+
+void setOBPixGreen() {
+  ob_pixel.setPixelColor(0, pixel.Color(10,0,0));
+  ob_pixel.show();
+}
+
+void setOBPixBlue() {
+  ob_pixel.setPixelColor(0, pixel.Color(0,0,10));
+  ob_pixel.show();
+}
+
+// --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions ---
+
+int connectWifi() {
+
+  WiFi.mode(WIFI_STA); //Optional
+  Serial.print("Connecting to SSID ");
+  Serial.print(config.ssid);
+  //Serial.print(" with password ");
+  //Serial.print(config.wifi_password);
+  int count = 0;
+  WiFi.begin(config.ssid, config.wifi_password);
+  
+  while(WiFi.status() != WL_CONNECTED){
+    Serial.print(".");
+    delay(1000);
+    count++;
+    if (count > 10) {
+      Serial.print("Unable to connect to SSID ");
+      Serial.println(config.ssid);
+      return 1;
+    }    
+  }
+
+  Serial.print("\nConnected to SSID ");
+  Serial.println(config.ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+  if (strcmp(config.mqtt_enabled, "true") == 0) {
+    startMQTTConnection();
+  }
+  return 0;
+}
+
+// --- Command Functions --- Command Functions --- Command Functions --- Command Functions --- Command Functions --- Command Functions ---
+
 void unlock(int secs) {
-  File configFile = SPIFFS.open("/DL32.json", "r");
-  size_t size = configFile.size();
-  std::unique_ptr<char[]> buf(new char[size]);
-  configFile.readBytes(buf.get(), size);
-  StaticJsonBuffer<200> jsonBuffer;
-  JsonObject& json = jsonBuffer.parseObject(buf.get());
-  const char* mqtt_stat_topic = json["mqtt_stat_topic"];
-  configFile.close();
   int loops = 0;
   int count = 0;
   Serial.print("Unlock - ");
   Serial.print(secs);
   Serial.println(" Seconds");
-  digitalWrite(lockRelay, HIGH);
-  MQTTclient.publish(mqtt_stat_topic, "unlocked");
-  setLEDColor(2);
-  unlockBeep();
-  //If "secs" is zero, leave unlocked indefinitely
-  if (secs == 0) {
-    persistUnlockBeep();
-    Serial.println("Unlocked indefinateley");
-    return;
-  }
+  digitalWrite(lockRelay_pin, HIGH);
+  setPixGreen();
+  MQTTclient.publish(config.mqtt_stat_topic, "unlocked");
+  playUnlockTone();
   while (loops < secs) {
-    if (digitalRead(exitButton) == LOW) {
-      count++;
-      Serial.println("Button being held");
-    }
-    delay(1000);
     loops++;
+    delay(1000);
   }
   Serial.println("Lock");
-  digitalWrite(lockRelay, LOW);
-  MQTTclient.publish(mqtt_stat_topic, "locked");
-  setLEDColor(idlcol);
-  if (count == exitButDur) {
-    addBeep();
-    addKeyMode();
-    shortBeep();
-  }
-}
-//Check magnetic sensor for open/closed door state (Optional)
-void checkMagSensor() {
-  if (doorSensorConnected == true) {
-    if (doorOpen == true && digitalRead(magSensor) == LOW) {
-      //send not that door has closed
-      doorOpen = false;
-      Serial.println("Door Opened");
-      idlcol = 6;
-    } else if (doorOpen == false && digitalRead(magSensor) == HIGH) {
-      doorOpen = true;
-      Serial.println("Door Closed");
-      idlcol = 3;
-    }
-  }
+  setPixBlue();
+  digitalWrite(lockRelay_pin, LOW);
+  MQTTclient.publish(config.mqtt_stat_topic, "locked");
 }
 
 // --- Button Functions --- Button Functions --- Button Functions --- Button Functions --- Button Functions --- Button Functions ---
 
-//Unlock button is pressed - Unlock for 5sec, enter programming mode if held for 30sec
 int checkExit() {
-  if (digitalRead(exitButton) == LOW) {
-    File configFile = SPIFFS.open("/DL32.json", "r");
-    size_t size = configFile.size();
-    std::unique_ptr<char[]> buf(new char[size]);
-    configFile.readBytes(buf.get(), size);
-    StaticJsonBuffer<200> jsonBuffer;
-    JsonObject& json = jsonBuffer.parseObject(buf.get());
-    const char* mqtt_stat_topic = json["mqtt_stat_topic"];
-    configFile.close();
-    Serial.println("");
-    Serial.println("Button Pressed");
-    MQTTclient.publish(mqtt_stat_topic, "button pressed");
-    unlock(exitButDur);
-    return 1;
-  }
-}
-
-//Programming button
-//  - Held for 5sec from boot - copy config/keys from SD to SPIFFS
-//  - Held for 10sec from boot - Purge all keys from keys.txt
-void checkProgBoot() {
-  int count = 0;
-  while (digitalRead(progButton) == LOW) {
-    if (count == 0) {
-      Serial.println("");
-      Serial.print("Program Button - ");
+  long count = 0;
+  if (digitalRead(exitButton_pin) == LOW) {
+    while (digitalRead(exitButton_pin) == LOW) {
+      count++;
+      delay(10);
+      if (count > 300) {
+        addKeyMode();
+        return 0;
+      }
     }
-    else if (count == 5) {
-      addBeep();
+    if (count > 5 && count < 501){
+      Serial.println("Exit Button Pressed");
+      MQTTclient.publish(config.mqtt_stat_topic, "button pressed");
+      unlock(exitButDur);
+      return 0;
     }
-    else if (count > 10) {
-      Serial.println("KEY PURGE INITIATED");
-      purgeBeep();
-      deleteFile(SPIFFS, "/keys.txt");
-      delay(2000);
-      writeFile(SPIFFS, "/keys.txt", "");
-      Serial.println("KEY PURGE COMPLETED");
-      return;
-    }
-    delay(1000);
-    count++;
-  }
-  if (count >= 5) {
-    Serial.println("Copying configuation file and keys from SD to SPIFFS");
-    Serial.println("");
-    configSDtoSPIFFS();
-    keysSDtoSPIFFS();
-    Serial.println("Restarting...");
-    ESP.restart();
-    return;
-  }
-}
-
-// While running, hold bottom button for 5sec to add tag
-void checkAdd() {
-  int count = 0;
-  while (digitalRead(progButton) == LOW) {
-    if (count == 5) {
-      addBeep();
-    }
-    delay(1000);
-    count++;
-  }
-  if (count >= 5) {
-    addKeyMode();
-    return;
-  }
-}
-
-// Bell button is pressed - Play Tone
-void checkBell() {
-  if (digitalRead(bellButton) == LOW) {
-    File configFile = SPIFFS.open("/DL32.json", "r");
-    size_t size = configFile.size();
-    std::unique_ptr<char[]> buf(new char[size]);
-    configFile.readBytes(buf.get(), size);
-    StaticJsonBuffer<200> jsonBuffer;
-    JsonObject& json = jsonBuffer.parseObject(buf.get());
-    const char* mqtt_stat_topic = json["mqtt_stat_topic"];
-    configFile.close();
-    Serial.println("");
-    Serial.print("Bell Pressed - ");
-    MQTTclient.publish(mqtt_stat_topic, "bell pressed");
-    bellBeep();
-  }
-}
-
-//Check if the programming button (at bottom of unit) is being pressed.
-void checkProg() {
-  if (digitalRead(progButton) == LOW) {
-    Serial.println("");
-    Serial.println("Prog Pressed");
-    beepIP();
-  }
-}
-
-// Used for listening for exit events during delay
-int exitListenDelay(int milisecs) {
-  int count = 0;
-  while (count < milisecs) {
-    if (checkExit() == 1) {
-      return 1;
-    }
-    delay(milisecs);
-    count++;
   }
   return 0;
 }
 
-// --- RFID Functions --- RFID Functions --- RFID Functions --- RFID Functions --- RFID Functions --- RFID Functions ---
-
-// Check for presence of RFID card
-void checkCard() {
-  int matchedCards = 0;
-  if (wg.available()) {
-    unsigned long cardCode;
-    cardCode = wg.getCode();
-    if (cardCode < 10) {
-      return;      
+void checkAUX() {
+  if (digitalRead(AUXButton_pin) == LOW) {
+    long count = 0;
+    Serial.println("AUX Button Pressed");
+    MQTTclient.publish(config.mqtt_stat_topic, "AUX button pressed");
+    while (digitalRead(AUXButton_pin) == LOW && (count < 500)) {
+      count++;
+      delay(10);
     }
-    Serial.println("");
-    Serial.print("CARD UID: ");
-    Serial.print(wg.getCode());
-    Serial.print(", Type W");
-    Serial.println(wg.getWiegandType());
-    char tagBuffer[11];
-    char entryBuffer[11];
-    sprintf(entryBuffer, "%ld", cardCode);
-
-    File keysFile = SPIFFS.open("/keys.txt", "r");
-    int charMatches = 0;
-    while (keysFile.available()) {
-      int cardDigits = keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer));
-      tagBuffer[cardDigits] = 0;
-      charMatches = 0;
-      for (int loopCount = 0; loopCount < sizeof(tagBuffer); loopCount++) {
-        if (entryBuffer[loopCount] == tagBuffer[loopCount]) {
-          charMatches++;
-        }
-      }
-      if (charMatches == cardDigits - 1) {
-        Serial.print(tagBuffer);
-        Serial.print(" - ");
-        Serial.println("MATCH");
-        matchedCards++;
-      } else {
-        Serial.print(tagBuffer);
-        Serial.print(" - ");
-        Serial.println("NO MATCH");
-      }
+    if (count > 499) {
+      setPixPurple();
+      Serial.print("Uploading config file ");
+      Serial.print(config_filename);
+      Serial.print(" from SD card to FFat, restarting...");
+      delay(1000);
+      configSDtoFFat();
+      delay(1000);
+      ESP.restart();
     }
-    keysFile.close();
-    if (matchedCards > 0) {
-      unlock(tagDur);
-    } else {
-      invalidTag();
-    }
+    //Serial.println(count);
+    return;
   }
 }
 
-// Tag is unrecognised - Red LED, 4x beeps
-void invalidTag() {
-  Serial.println("Invalid Tag Detected!");
-  digitalWrite(lockRelay, LOW);
-  setLEDColor(1);
-  deniedBeep();
-  delay(unrecognizedKeyDur * 1000);
-  setLEDColor(idlcol);
-  Serial.println("");
+void checkBell() {
+  if (digitalRead(bellButton_pin) == LOW) {
+    Serial.println("");
+    Serial.print("Bell Pressed - ");
+    MQTTclient.publish(config.mqtt_stat_topic, "bell pressed");
+    ringBell();
+  }
+}
+
+//Check magnetic sensor for open/closed door state (Optional)
+void checkMagSensor() {
+  if (doorOpen == true && digitalRead(magSensor_pin) == LOW) {
+    //send not that door has closed
+    doorOpen = false;
+    Serial.println("Door Opened");
+  } else if (doorOpen == false && digitalRead(magSensor_pin) == HIGH) {
+    doorOpen = true;
+    Serial.println("Door Closed");
+  }
 }
 
 // --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions ---
 
-// Play long beep
-void longBeep() {
-  digitalWrite(buzzer, HIGH);
-  delay(1500);
-  digitalWrite(buzzer, LOW);
-}
-
-// Play short beep
-void shortBeep() {
-  digitalWrite(buzzer, HIGH);
-  delay(250);
-  digitalWrite(buzzer, LOW);
-}
-
-// Play unlock tone
-void unlockBeep() {
-  digitalWrite(buzzer, HIGH);
-  delay(100);
-  digitalWrite(buzzer, LOW);
-  delay(100);
-  digitalWrite(buzzer, HIGH);
-  delay(100);
-  digitalWrite(buzzer, LOW);
-}
-
-// Play unlock tone
-void persistUnlockBeep() {
-  digitalWrite(buzzer, HIGH);
-  delay(1000);
-  digitalWrite(buzzer, LOW);
-}
-
-// Play Doorbell tone
-void bellBeep() {
-  Serial.println("Ringing");
-  for (int i = 0; i <= 4; i++) {
-    APA106.SetPixelColor(0, hslYellow);
-    APA106.Show();
-    digitalWrite(buzzer, HIGH);
-    delay(50);
-    digitalWrite(buzzer, LOW);
-    delay(20);
-    digitalWrite(buzzer, HIGH);
-    delay(40);
-    digitalWrite(buzzer, LOW);
-    delay(20);
-    digitalWrite(buzzer, HIGH);
-    delay(40);
-    digitalWrite(buzzer, LOW);
-    delay(20);
-    digitalWrite(buzzer, HIGH);
-    delay(40);
-    digitalWrite(buzzer, LOW);
-    delay(20);
-    digitalWrite(buzzer, HIGH);
-    delay(40);
-    digitalWrite(buzzer, LOW);
-    setLEDColor(idlcol);
-
-    if (exitListenDelay(15) == 1) {
-      break;
-    }
-
-    APA106.SetPixelColor(0, hslYellow);
-    APA106.Show();
-    digitalWrite(buzzer, HIGH);
-    delay(50);
-    digitalWrite(buzzer, LOW);
-    delay(20);
-    digitalWrite(buzzer, HIGH);
-    delay(40);
-    digitalWrite(buzzer, LOW);
-    delay(20);
-    digitalWrite(buzzer, HIGH);
-    delay(40);
-    digitalWrite(buzzer, LOW);
-    delay(20);
-    digitalWrite(buzzer, HIGH);
-    delay(40);
-    digitalWrite(buzzer, LOW);
-    delay(20);
-    digitalWrite(buzzer, HIGH);
-    delay(40);
-    digitalWrite(buzzer, LOW);
-    setLEDColor(idlcol);
-    if (exitListenDelay(50) == 1) {
-      break;
-    }
+void playUnlockTone() {
+  if (forceSilent == false) {
+    ledcWriteTone(buzzer_pin, 5000);
+    delay(100);
+    ledcWriteTone(buzzer_pin, 0);
+    delay(100);
+    ledcWriteTone(buzzer_pin, 5000);
+    delay(100);
+    ledcWriteTone(buzzer_pin, 0);
   }
 }
 
-//beep the IP Address
-void beepIP() {
-  if (WiFi.status() == WL_CONNECTED) {
-    File configFile = SPIFFS.open("/DL32.json", "r");
-    size_t size = configFile.size();
-    std::unique_ptr<char[]> buf(new char[size]);
-    configFile.readBytes(buf.get(), size);
-    StaticJsonBuffer<200> jsonBuffer;
-    JsonObject& json = jsonBuffer.parseObject(buf.get());
-    const char* mqtt_stat_topic = json["mqtt_stat_topic"];
-    configFile.close();
-    MQTTclient.publish(mqtt_stat_topic, "Outputting IP Address: ");
-    MQTTclient.publish(mqtt_stat_topic, WiFi.localIP().toString().c_str());
-    Serial.print("Outputting IP Address ");
-    Serial.print(WiFi.localIP());
-    Serial.println(" via beep patterns");
-    delay(1000);
-    unsigned ip = WiFi.localIP()[3];
-    unsigned h = (ip / 100U) % 10;
-    unsigned t = (ip / 10U) % 10;
-    unsigned o = (ip / 1U) % 10;
-    int count = 0;
-    int octet = 0;
-    while (octet < 4) {
-      APA106.SetPixelColor(0, hslYellow);
-      APA106.Show();
-      Serial.println("LED Yellow");
-      ip = WiFi.localIP()[octet];
-      h = (ip / 100U) % 10;
-      t = (ip / 10U) % 10;
-      o = (ip / 1U) % 10;
-      count = 0;
-      Serial.print("Beeping out ");
-      if (h > 0) {
-        Serial.print(h);
-      }
-      while (count < h) {
-        digitalWrite(buzzer, HIGH);
-        Serial.print(".");
-        delay(10);
-        digitalWrite(buzzer, LOW);
-        delay(200);
-        count++;
-      }
-      if (h > 0) {
-        delay(2500);
-      }
-      if (t > 0 || h > 0) {
-        Serial.print(t);
-      }
-      count = 0;
-      while (count < t) {
-        digitalWrite(buzzer, HIGH);
-        Serial.print(".");
-        delay(10);
-        digitalWrite(buzzer, LOW);
-        delay(200);
-        count++;
-      }
-      if (t > 0 || h > 0) {
-        delay(2500);
-      }
-      Serial.print(o);
-      count = 0;
-      while (count < o) {
-        digitalWrite(buzzer, HIGH);
-        Serial.print(".");
-        delay(10);
-        digitalWrite(buzzer, LOW);
-        delay(200);
-        count++;
-      }
-      if (o > 0) {
-        delay(1000);
-        APA106.SetPixelColor(0, hslGreen);
-        APA106.Show();
-        Serial.println("LED Green");
-        delay(4000);
-      }
-      Serial.println("");
-      octet++;
-    }
-    setLEDColor(idlcol);
-  } else {
-    Serial.println("Not connected to Wifi - Cannot beep IP");
+void playUnauthorizedTone() {
+  if (forceSilent == false) {
+    ledcWriteTone(buzzer_pin, 700);
+    delay(200);
+    ledcWriteTone(buzzer_pin, 400);
+    delay(600);
+    ledcWriteTone(buzzer_pin, 0);
   }
 }
 
-// Play denied tone
-void deniedBeep() {
-  digitalWrite(buzzer, HIGH);
-  delay(300);
-  digitalWrite(buzzer, LOW);
-  delay(100);
-  digitalWrite(buzzer, HIGH);
-  delay(300);
-  digitalWrite(buzzer, LOW);
-  delay(100);
-  digitalWrite(buzzer, HIGH);
-  delay(300);
-  digitalWrite(buzzer, LOW);
-  delay(100);
-  digitalWrite(buzzer, HIGH);
-  delay(300);
-  digitalWrite(buzzer, LOW);
+void playAddModeTone() {
+  if (forceSilent == false) {
+    ledcWriteTone(buzzer_pin, 6500);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 6500);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 6500);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
+  }
 }
 
-// Play add tone
-void addBeep() {
-  digitalWrite(buzzer, HIGH);
-  delay(300);
-  digitalWrite(buzzer, LOW);
-  delay(100);
-  digitalWrite(buzzer, HIGH);
-  delay(300);
-  digitalWrite(buzzer, LOW);
-}
-
-// Play purge tone
-void purgeBeep() {
-  digitalWrite(buzzer, HIGH);
-  setLEDColor(1);
-  delay(100);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(1000);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(100);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(800);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(100);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(500);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(100);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(300);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(100);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(200);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(100);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(100);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(100);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(50);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(50);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, LOW);
-  APA106.SetPixelColor(0, hslBlue);
-  APA106.Show();
-  delay(20);
-  digitalWrite(buzzer, HIGH);
-  APA106.SetPixelColor(0, hslRed);
-  APA106.Show();
-  delay(3000);
-  digitalWrite(buzzer, LOW);
-  setLEDColor(idlcol);
+void ringBell() {
+  if (forceSilent == false) {
+    Serial.println("Ringing bell");
+    for (int i = 0; i <= 3; i++) {
+      for (int i = 0; i <= 25; i++) {
+        ledcWriteTone(buzzer_pin, random(500, 10000));
+        delay(75);
+        if (digitalRead(exitButton_pin) == LOW) {
+          return;
+        }
+      }
+      ledcWriteTone(buzzer_pin, 0);
+      delay(1000);
+    }
+    ledcWriteTone(buzzer_pin, 0);
+  }
 }
 
 // --- MQTT Functions --- MQTT Functions --- MQTT Functions --- MQTT Functions --- MQTT Functions --- MQTT Functions ---
 
-// Initiate connection to MQTT Broker
 void startMQTTConnection() {
-  int mqtt_port = 0;
-  File configFile = SPIFFS.open("/DL32.json", "r");
-  size_t size = configFile.size();
-  std::unique_ptr<char[]> buf(new char[size]);
-  configFile.readBytes(buf.get(), size);
-  StaticJsonBuffer<200> jsonBuffer;
-  JsonObject& json = jsonBuffer.parseObject(buf.get());
-  mqtt_port = json["mqtt_port"];
-  const char* mqtt_server = json["mqtt_server"];
-  configFile.close();
-  MQTTclient.setServer("192.168.1.20", 1883);
+  MQTTclient.setServer(config.mqtt_server, String(config.mqtt_port).toInt());
   MQTTclient.setCallback(MQTTcallback);
   delay(100);
-  MQTTclient.publish(mqtt_stat_topic, "locked", true);
+  MQTTclient.publish(config.mqtt_stat_topic, "locked", true);
   lastMQTTReconnectAttempt = 0;
 }
 
-//Reconnect to MQTT broker if disconnected
 boolean mqttReconnect() {
-  File configFile = SPIFFS.open("/DL32.json", "r");
-  size_t size = configFile.size();
-  std::unique_ptr<char[]> buf(new char[size]);
-  configFile.readBytes(buf.get(), size);
-  StaticJsonBuffer<200> jsonBuffer;
-  JsonObject& json = jsonBuffer.parseObject(buf.get());
-  const char* mqtt_client_name = json["mqtt_client_name"];
-  const char* mqtt_cmnd_topic = json["mqtt_cmnd_topic"];
-  const char* mqtt_stat_topic = json["mqtt_stat_topic"];
-  const char* mqtt_username = json["mqtt_username"];
-  const char* mqtt_password = json["mqtt_password"];
-  configFile.close();
-  //MQTT CREDS HARDCODED - TO BE UPDATED TO USE CONFIG FILE AT LATER POINT
-  if (MQTTclient.connect(mqtt_client_name, mqtt_username, mqtt_password)) {
-    Serial.print("Connected to MQTT Broker as client ");
-    Serial.println(mqtt_client_name);
-    MQTTclient.publish(mqtt_stat_topic, "Connected to MQTT Broker");
-    MQTTclient.subscribe(mqtt_cmnd_topic);
+  if (strcmp(config.mqtt_auth, "true") == 0) {
+    if (MQTTclient.connect(config.mqtt_client_name, config.mqtt_user, config.mqtt_password)) {
+      Serial.print("Connected to MQTT broker ");
+      Serial.print(config.mqtt_server);
+      Serial.print(" as ");
+      Serial.println(config.mqtt_client_name);
+      MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
+      MQTTclient.subscribe(config.mqtt_cmnd_topic);
+    }
   } else {
-    idlcol = 4;
+    if (MQTTclient.connect(config.mqtt_client_name)) {
+      Serial.print("Connected to MQTT broker ");
+      Serial.print(config.mqtt_server);
+      Serial.print(" as ");
+      Serial.println(config.mqtt_client_name);
+      MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
+      MQTTclient.subscribe(config.mqtt_cmnd_topic);
+    }
   }
   return MQTTclient.connected();
 }
 
 void MQTTcallback(char* topic, byte* payload, unsigned int length) {
-  File configFile = SPIFFS.open("/DL32.json", "r");
-  size_t size = configFile.size();
-  std::unique_ptr<char[]> buf(new char[size]);
-  configFile.readBytes(buf.get(), size);
-  StaticJsonBuffer<200> jsonBuffer;
-  JsonObject& json = jsonBuffer.parseObject(buf.get());
-  const char* mqtt_stat_topic = json["mqtt_stat_topic"];
-  configFile.close();
   Serial.println("");
   Serial.print("Message arrived TOPIC:[");
   Serial.print(topic);
@@ -1029,16 +811,12 @@ void MQTTcallback(char* topic, byte* payload, unsigned int length) {
   // Unlock if first letter of payload is "u"
   if ((char)payload[0] == 'u') {
     Serial.println("Unlocked via MQTT");
-    MQTTclient.publish(mqtt_stat_topic, "lock opened via MQTT");
+    MQTTclient.publish(config.mqtt_stat_topic, "lock opened via MQTT");
     unlock(mqttDur);
   } else if ((char)payload[0] == 'b') {
     Serial.println("Bell via MQTT");
-    MQTTclient.publish(mqtt_stat_topic, "Bell rung via MQTT");
-    bellBeep();
-  } else if ((char)payload[0] == 'p') {
-    Serial.println("Unlocked persistently via MQTT");
-    MQTTclient.publish(mqtt_stat_topic, "lock opened persistently via MQTT");
-    unlock(0);
+    MQTTclient.publish(config.mqtt_stat_topic, "Bell rung via MQTT");
+    ringBell();
   } else {
     Serial.println("");
     Serial.print("Message not recognized: ");
@@ -1058,8 +836,7 @@ void maintainConnnectionMQTT() {
   }
 }
 
-//Check MQTT for new messages
-void checkMQTT() {
+void checkMqtt() {
   if (MQTTclient.connected()) {
     MQTTclient.loop();
     long now = millis();
@@ -1070,34 +847,66 @@ void checkMQTT() {
   }
 }
 
+// --- Serial Functions --- Serial Functions --- Serial Functions --- Serial Functions --- Serial Functions ---
+
+void checkSerialCmd() {
+  if (Serial.available()) {
+    serialCmd = Serial.readStringUntil('\n');
+    serialCmd.trim();
+    if (serialCmd.equals("list_ffat")) {
+      listDir(FFat, "/", 0);
+    } else if (serialCmd.equals("list_sd")) {
+      listDir(SD, "/", 0);
+    } else if (serialCmd.equals("read_config")) {
+      readFile(FFat, config_filename);
+    } else if (serialCmd.equals("restart")) {
+      Serial.println("Restarting device...");
+      ESP.restart();
+    } else if (serialCmd.equals("reboot")) {
+      Serial.println("Restarting device...");
+      ESP.restart();
+    } else if (serialCmd.equals("unlock")) {
+      unlock(5);
+    } else {
+      Serial.println("bad command");
+    }
+    Serial.print("Command: ");
+    Serial.println(serialCmd);
+  }
+}
+
 // --- Web Functions --- Web Functions --- Web Functions --- Web Functions --- Web Functions --- Web Functions ---
 
 void handleRoot() {
-  DL32server.send(200, "text/plain", "hello from ESP32!");
+  webServer.send(200, "text/plain", "hello from ESP32!");
   Serial.print("Message arrived TOPIC:[");
 }
 
 void handleNotFound() {
   String message = "File Not Found\n\n";
   message += "URI: ";
-  message += DL32server.uri();
+  message += webServer.uri();
   message += "\nMethod: ";
-  message += (DL32server.method() == HTTP_GET) ? "GET" : "POST";
+  message += (webServer.method() == HTTP_GET) ? "GET" : "POST";
   message += "\nArguments: ";
-  message += DL32server.args();
+  message += webServer.args();
   message += "\n";
-  for (uint8_t i = 0; i < DL32server.args(); i++) {
-    message += " " + DL32server.argName(i) + ": " + DL32server.arg(i) + "\n";
+  for (uint8_t i = 0; i < webServer.args(); i++) {
+    message += " " + webServer.argName(i) + ": " + webServer.arg(i) + "\n";
   }
-  DL32server.send(404, "text/plain", message);
+  webServer.send(404, "text/plain", message);
 }
 
 // Download list of allowed keys (keys.txt)
 void DownloadKeysHTTP() {
-  SPIFFS_file_download("keys.txt");
+  int result = FFat_file_download(keys_filename);
   SendHTML_Header();
   siteButtons();
-  pageContent += F("<br/> <textarea readonly>Downloading keys file keys.txt</textarea>");
+  if (result == 0) {
+    pageContent += F("<br/> <textarea readonly>Downloading keys.txt</textarea>");
+  } else {
+    pageContent += F("<br/> <textarea readonly>Unable to download keys.txt</textarea>");
+  }
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1105,10 +914,18 @@ void DownloadKeysHTTP() {
 
 // Download copy of config file (config.json)
 void DownloadConfigHTTP() {
-  SPIFFS_file_download("DL32.json");
+  int result = FFat_file_download(config_filename);
   SendHTML_Header();
   siteButtons();
-  pageContent += F("<br/> <textarea readonly>Downloading config file DL32.json</textarea>");
+  if (result == 0) {
+    pageContent += F("<br/> <textarea readonly>Downloading ");
+    pageContent += F(config_filename); 
+    pageContent += F("</textarea>");
+  } else {
+    pageContent += F("<br/> <textarea readonly>Unable to download ");
+    pageContent += F(config_filename);
+    pageContent += F("</textarea>");
+  }
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1117,7 +934,7 @@ void DownloadConfigHTTP() {
 // Output a list of allowed keys to serial
 void OutputKeys() {
   Serial.println("Reading file: keys.txt");
-  File outFile = SPIFFS.open("/keys.txt");
+  File outFile = FFat.open(keys_filename);
   while (outFile.available()) {
     Serial.write(outFile.read());
   }
@@ -1150,7 +967,7 @@ void DisplayKeys() {
   siteButtons();
   pageContent += F("<br/> <textarea readonly>");
   char buffer[64];
-  File dispFile = SPIFFS.open("/keys.txt");
+  File dispFile = FFat.open(keys_filename);
   while (dispFile.available()) {
     int l = dispFile.readBytesUntil('\n', buffer, sizeof(buffer));
     buffer[l] = 0;
@@ -1165,8 +982,9 @@ void DisplayKeys() {
 
 // Output config to serial
 void OutputConfig() {
-  Serial.println("Reading file: DL32.json");
-  File outFile = SPIFFS.open("/DL32.json");
+  Serial.print("Reading file: ");
+  Serial.println(config_filename);
+  File outFile = FFat.open(config_filename);
   while (outFile.available()) {
     Serial.write(outFile.read());
   }
@@ -1186,7 +1004,7 @@ void DisplayConfig() {
   siteButtons();
   pageContent += F("<br/> <textarea readonly>");
   char buffer[64];
-  File dispFile = SPIFFS.open("/DL32.json");
+  File dispFile = FFat.open(config_filename);
   while (dispFile.available()) {
     int l = dispFile.readBytesUntil('\n', buffer, sizeof(buffer));
     buffer[l] = 0;
@@ -1209,16 +1027,8 @@ void MainPage() {
 }
 
 void UnlockHTTP() {
-  File configFile = SPIFFS.open("/DL32.json", "r");
-  size_t size = configFile.size();
-  std::unique_ptr<char[]> buf(new char[size]);
-  configFile.readBytes(buf.get(), size);
-  StaticJsonBuffer<200> jsonBuffer;
-  JsonObject& json = jsonBuffer.parseObject(buf.get());
-  const char* mqtt_stat_topic = json["mqtt_stat_topic"];
-  configFile.close();
   Serial.println("Unlocked via HTTP");
-  MQTTclient.publish(mqtt_stat_topic, "HTTP Unlock");
+  MQTTclient.publish(config.mqtt_stat_topic, "HTTP Unlock");
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Door Unlocked</textarea>");
@@ -1228,28 +1038,28 @@ void UnlockHTTP() {
   unlock(httpDur);
 }
 
-void configSDtoSPIFFSHTTP() {
-  configSDtoSPIFFS();
+void configSDtoFFatHTTP() {
+  configSDtoFFat();
   SendHTML_Header();
   siteButtons();
-  pageContent += F("<br/> <textarea readonly>Copied configuration from SD to SPIFFS</textarea>");
+  pageContent += F("<br/> <textarea readonly>Copied configuration from SD to FFat</textarea>");
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
 }
 
-void keysSDtoSPIFFSHTTP() {
-  keysSDtoSPIFFS();
+void keysSDtoFFatHTTP() {
+  keysSDtoFFat();
   SendHTML_Header();
   siteButtons();
-  pageContent += F("<br/> <textarea readonly>Copied keys from SD to SPIFFS</textarea>");
+  pageContent += F("<br/> <textarea readonly>Copied keys from SD to FFat</textarea>");
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
 }
 
 void purgeKeysHTTP() {
-  deleteFile(SPIFFS, "/keys.txt");
+  deleteFile(FFat, keys_filename);
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Keys Purged</textarea>");
@@ -1259,7 +1069,7 @@ void purgeKeysHTTP() {
 }
 
 void purgeConfigHTTP() {
-  deleteFile(SPIFFS, "/DL32.json");
+  deleteFile(FFat, config_filename);
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Config Purged</textarea>");
@@ -1268,17 +1078,19 @@ void purgeConfigHTTP() {
   SendHTML_Stop();
 }
 
-void SPIFFS_file_download(String filename) {
-  if (SPIFFS_present) {
-    File download = SPIFFS.open("/" + filename);
+int FFat_file_download(String filename) {
+  if (FFat_present) {
+    File download = FFat.open("/" + filename);
     if (download) {
-      DL32server.sendHeader("Content-Type", "text/text");
-      DL32server.sendHeader("Content-Disposition", "attachment; filename=" + filename);
-      DL32server.sendHeader("Connection", "close");
-      DL32server.streamFile(download, "application/octet-stream");
+      webServer.sendHeader("Content-Type", "text/text");
+      webServer.sendHeader("Content-Disposition", "attachment; filename=" + filename);
+      webServer.sendHeader("Connection", "close");
+      webServer.streamFile(download, "application/octet-stream");
       download.close();
+      return 0;
     }
   }
+  return 1;
 }
 
 void RingBellHTTP() {
@@ -1288,7 +1100,7 @@ void RingBellHTTP() {
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
-  bellBeep();
+  ringBell();
 }
 
 void displayAddressingHTTP() {
@@ -1327,31 +1139,35 @@ void outputAddressingHTTP() {
 }
 
 void saveAddressingStaticHTTP() {
-
+  //TODO
 }
 
 void downloadAddressingStaticHTTP() {
-  SPIFFS_file_download("addressing.json");
+  int result = FFat_file_download("addressing.json");
   SendHTML_Header();
   siteButtons();
-  pageContent += F("<br/> <textarea readonly>Downloading static addressing file addressing.json</textarea>");
+  if (result == 0) {
+    pageContent += F("<br/> <textarea readonly>Downloading addressing.json</textarea>");
+  } else {
+    pageContent += F("<br/> <textarea readonly>Unable to download addressing.json</textarea>");
+  }
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
 }
 
-void addressingStaticSDtoSPIFFSHTTP() {
-  addressingSDtoSPIFFS();
+void addressingStaticSDtoFFatHTTP() {
+  //addressingSDtoFFat();
   SendHTML_Header();
   siteButtons();
-  pageContent += F("<br/> <textarea readonly>Copied static addressing from SD to SPIFFS</textarea>");
+  pageContent += F("<br/> <textarea readonly>Copied static addressing from SD to FFat</textarea>");
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
 }
 
 void purgeAddressingStaticHTTP() {
-  deleteFile(SPIFFS, "/addressing.json");
+  deleteFile(FFat, "/addressing.json");
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>static addressing purged</textarea>");
@@ -1360,10 +1176,9 @@ void purgeAddressingStaticHTTP() {
   SendHTML_Stop();
 }
 
-
 // Output a list of FS files to serial
 void OutputFSHTTP() {
-  listDir(SPIFFS, "/", 0);
+  listDir(FFat, "/", 0);
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>FS files output to serial.</textarea>");
@@ -1395,8 +1210,6 @@ void OutputSDFSHTTP() {
 
 // Display a list of SD files in webpage
 void DisplaySDFSHTTP() {
-
-
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>WIP</textarea>");
@@ -1406,24 +1219,24 @@ void DisplaySDFSHTTP() {
 }
 
 void SendHTML_Header() {
-  DL32server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  DL32server.sendHeader("Pragma", "no-cache");
-  DL32server.sendHeader("Expires", "-1");
-  DL32server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  DL32server.send(200, "text/html", "");
+  webServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  webServer.sendHeader("Pragma", "no-cache");
+  webServer.sendHeader("Expires", "-1");
+  webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  webServer.send(200, "text/html", "");
   siteHeader();
-  DL32server.sendContent(pageContent);
+  webServer.sendContent(pageContent);
   pageContent = "";
 }
 
 void SendHTML_Content() {
-  DL32server.sendContent(pageContent);
+  webServer.sendContent(pageContent);
   pageContent = "";
 }
 
 void SendHTML_Stop() {
-  DL32server.sendContent("");
-  DL32server.client().stop();
+  webServer.sendContent("");
+  webServer.client().stop();
 }
 
 void siteHeader() {
@@ -1431,28 +1244,6 @@ void siteHeader() {
   pageContent += F("<html>");
   pageContent += F("<head>");
   pageContent += F("<style>");
-
-  //Green Theme
-  //  pageContent += F("div {width: 350px; margin: 20px auto; text-align: center; border: 3px solid #C2F444; background-color: #555555; left: auto; right: auto;}");
-  //  pageContent += F(".header {font-family: Arial, Helvetica, sans-serif; font-size: 20px; color: #C2F444;}");
-  //  pageContent += F("button {width: 300px; background-color: #C2F444; border: none; text-decoration: none;}");
-  //  pageContent += F("button:hover {width: 300px; background-color: #B2E434; border: none; text-decoration: none;}");
-  //  pageContent += F("h1 {font-family: Arial, Helvetica, sans-serif; color: #C2F444;}");
-  //  pageContent += F("h3 {font-family: Arial, Helvetica, sans-serif; color: #C2F444;}");
-  //  pageContent += F("a {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #C2F444;}");
-  //  pageContent += F("textarea {background-color: #303030; font-size: 11px; width: 300px; height: 150px; resize: vertical; color: #C2F444;}");
-  //  pageContent += F("body {background-color: #303030; text-align: center;}");
-
-  //Blue Theme
-  //  pageContent += F("div {width: 350px; margin: 20px auto; text-align: center; border: 3px solid #4286f4; background-color: #555555; left: auto; right: auto;}");
-  //  pageContent += F(".header {font-family: Arial, Helvetica, sans-serif; font-size: 20px; color: #4286f4;}");
-  //  pageContent += F("button {width: 300px; background-color: #4286f4; border: none; text-decoration: none;}");
-  //  pageContent += F("button:hover {width: 300px; background-color: #3276e4; border: none; text-decoration: none;}");
-  //  pageContent += F("h1 {font-family: Arial, Helvetica, sans-serif; color: #4286f4;}");
-  //  pageContent += F("h3 {font-family: Arial, Helvetica, sans-serif; color: #4286f4;}");
-  //  pageContent += F("a {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #4286f4;}");
-  //  pageContent += F("textarea {background-color: #303030; font-size: 11px; width: 300px; height: 150px; resize: vertical; color: #4286f4;}");
-  //  pageContent += F("body {background-color: #303030; text-align: center;}");
 
   //Orange Theme
   pageContent += F("div {width: 350px; margin: 20px auto; text-align: center; border: 3px solid #ff3200; background-color: #555555; left: auto; right: auto;}");
@@ -1485,7 +1276,7 @@ void siteButtons() {
   pageContent += F("<br/>");
   pageContent += F("<a href='/DisplayKeys'><button>Display keys in page</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/keysSDtoSPIFFSHTTP'><button>Upload keys SD to DL32</button></a>");
+  pageContent += F("<a href='/keysSDtoFFatHTTP'><button>Upload keys SD to DL32</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeKeysHTTP'><button>Purge stored keys</button></a>");
   pageContent += F("<br/> <br/>");
@@ -1496,14 +1287,14 @@ void siteButtons() {
   pageContent += F("<br/>");
   pageContent += F("<a href='/DisplayConfig'><button>Display config in page</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/configSDtoSPIFFSHTTP'><button>Upload config SD to DL32</button></a>");
+  pageContent += F("<a href='/configSDtoFFatHTTP'><button>Upload config SD to DL32</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeConfigHTTP'><button>Purge configuration</button></a>");
   pageContent += F("<br/> <br/>");
   pageContent += F("<a class='header'>Filesystem Operations<a/>");
-  pageContent += F("<a href='/OutputFSHTTP'><button>Output SPIFFS Contents to Serial</button></a>");
+  pageContent += F("<a href='/OutputFSHTTP'><button>Output FFat Contents to Serial</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/DisplayFSHTTP'><button style='background-color: #999999; color: #777777';>Display SPIFFS contents in page</button></a>");
+  pageContent += F("<a href='/DisplayFSHTTP'><button style='background-color: #999999; color: #777777';>Display FFat contents in page</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/OutputSDFSHTTP'><button>Output SD FS Contents to Serial</button></a>");
   pageContent += F("<br/>");
@@ -1516,11 +1307,11 @@ void siteButtons() {
   pageContent += F("<br/>");
   pageContent += F("<a href='/saveAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Save current addressing as static</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/downloadAddressingStaticHTTP'><button>Download static addressing file</button></a>");
+  pageContent += F("<a href='/downloadAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Download static addressing file</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/addressingStaticSDtoSPIFFSHTTP'><button>Upload static addressing SD to DL32</button></a>");
+  pageContent += F("<a href='/addressingStaticSDtoFFatHTTP'><button style='background-color: #999999; color: #777777';>Upload static addressing SD to DL32</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/purgeAddressingStaticHTTP'><button>Purge static addressing</button></a>");
+  pageContent += F("<a href='/purgeAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Purge static addressing</button></a>");
   pageContent += F("<br/>");
 }
 
@@ -1530,112 +1321,144 @@ void siteFooter() {
 }
 
 void startWebServer() {
-  DL32server.on("/DownloadKeysHTTP", DownloadKeysHTTP);
-  DL32server.on("/DisplayKeys", DisplayKeys);
-  DL32server.on("/OutputKeys", OutputKeys);
-  DL32server.on("/UnlockHTTP", UnlockHTTP);
-  DL32server.on("/RingBellHTTP", RingBellHTTP);
-  DL32server.on("/DownloadConfigHTTP", DownloadConfigHTTP);
-  DL32server.on("/purgeKeysHTTP", purgeKeysHTTP);
-  DL32server.on("/DisplayConfig", DisplayConfig);
-  DL32server.on("/OutputConfig", OutputConfig);
-  DL32server.on("/OutputFSHTTP", OutputFSHTTP);
-  DL32server.on("/DisplayFSHTTP", DisplayFSHTTP);
-  DL32server.on("/OutputSDFSHTTP", OutputSDFSHTTP);
-  DL32server.on("/DisplaySDFSHTTP", DisplaySDFSHTTP);
-  DL32server.on("/purgeConfigHTTP", purgeConfigHTTP);
-  DL32server.on("/restartESPHTTP", restartESPHTTP);
-  DL32server.on("/configSDtoSPIFFSHTTP", configSDtoSPIFFSHTTP);
-  DL32server.on("/keysSDtoSPIFFSHTTP", keysSDtoSPIFFSHTTP);
-  DL32server.on("/displayAddressingHTTP", displayAddressingHTTP);
-  DL32server.on("/outputAddressingHTTP", outputAddressingHTTP);
-  DL32server.on("/saveAddressingStaticHTTP", saveAddressingStaticHTTP);
-  DL32server.on("/downloadAddressingStaticHTTP", downloadAddressingStaticHTTP);
-  DL32server.on("/addressingStaticSDtoSPIFFSHTTP", addressingStaticSDtoSPIFFSHTTP);
-  DL32server.on("/purgeAddressingStaticHTTP", purgeAddressingStaticHTTP);
-  DL32server.on("/", MainPage);
-  DL32server.begin();
+  webServer.on("/DownloadKeysHTTP", DownloadKeysHTTP);
+  webServer.on("/DisplayKeys", DisplayKeys);
+  webServer.on("/OutputKeys", OutputKeys);
+  webServer.on("/UnlockHTTP", UnlockHTTP);
+  webServer.on("/RingBellHTTP", RingBellHTTP);
+  webServer.on("/DownloadConfigHTTP", DownloadConfigHTTP);
+  webServer.on("/purgeKeysHTTP", purgeKeysHTTP);
+  webServer.on("/DisplayConfig", DisplayConfig);
+  webServer.on("/OutputConfig", OutputConfig);
+  webServer.on("/OutputFSHTTP", OutputFSHTTP);
+  webServer.on("/DisplayFSHTTP", DisplayFSHTTP);
+  webServer.on("/OutputSDFSHTTP", OutputSDFSHTTP);
+  webServer.on("/DisplaySDFSHTTP", DisplaySDFSHTTP);
+  webServer.on("/purgeConfigHTTP", purgeConfigHTTP);
+  webServer.on("/restartESPHTTP", restartESPHTTP);
+  webServer.on("/configSDtoFFatHTTP", configSDtoFFatHTTP);
+  webServer.on("/keysSDtoFFatHTTP", keysSDtoFFatHTTP);
+  webServer.on("/displayAddressingHTTP", displayAddressingHTTP);
+  webServer.on("/outputAddressingHTTP", outputAddressingHTTP);
+  webServer.on("/saveAddressingStaticHTTP", saveAddressingStaticHTTP);
+  webServer.on("/downloadAddressingStaticHTTP", downloadAddressingStaticHTTP);
+  webServer.on("/addressingStaticSDtoFFatHTTP", addressingStaticSDtoFFatHTTP);
+  webServer.on("/purgeAddressingStaticHTTP", purgeAddressingStaticHTTP);
+  webServer.on("/", MainPage);
+  webServer.begin();
   Serial.print("Web Server started at http://");
   Serial.println(WiFi.localIP());
 }
 
-
 // --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP ---
 
 void setup() {
-
   delay(500);
-
   Serial.begin(115200);
-  while (!Serial);
-  Serial.println();
-  Serial.print("DL32 firmware version 1.1.");
+  Serial.println("Configuring WDT...");
+  secondTick.attach(1, ISRwatchdog);
+  fatfs_setup();
+  sd_setup();
+  Serial.print("DL32 firmware version ");
   Serial.println(codeVersion);
   Serial.println("Initializing...");
   Serial.flush();
-  pinMode(buzzer, OUTPUT);
-  pinMode(lockRelay, OUTPUT);
-  pinMode(exitButton, INPUT_PULLUP);
-  pinMode(progButton, INPUT_PULLUP);
-  pinMode(bellButton, INPUT_PULLUP);
-  pinMode(magSensor, INPUT_PULLUP);
-  digitalWrite(buzzer, LOW);
-  digitalWrite(lockRelay, LOW);
-  wg.begin(wiegand0, wiegand1); // Init wiegand interface
-  APA106.Begin();
-  APA106.Show();
-  if (!SPIFFS.begin()) {
-    Serial.println("Failed to mount SPIFFS");
-    Serial.println("Gate9a");
-  } else {
-    Serial.println("SPIFFS initialised.");
-    SPIFFS_present = true;
-    listDir(SPIFFS, "/", 0);
+  pinMode(buzzer_pin, OUTPUT);
+  pinMode(lockRelay_pin, OUTPUT);
+  pinMode(exitButton_pin, INPUT_PULLUP);
+  pinMode(wiegand_0_pin, INPUT);
+  pinMode(wiegand_1_pin, INPUT);
+  pinMode(AUXButton_pin, INPUT_PULLUP);
+  pinMode(bellButton_pin, INPUT_PULLUP);
+  pinMode(magSensor_pin, INPUT_PULLUP);
+  pinMode(SD_CS_PIN, OUTPUT);
+  pinMode(DS01, INPUT_PULLUP);
+  pinMode(DS02, INPUT_PULLUP);
+  pinMode(DS03, INPUT_PULLUP);
+  pinMode(DS04, INPUT_PULLUP);
+  digitalWrite(buzzer_pin, LOW);
+  digitalWrite(lockRelay_pin, LOW);
+
+  // Check Dip Switch states
+  if (digitalRead(DS01) == LOW) {
+    Serial.print("Dip Switch #1 ON");
+    Serial.println(" - Forced offline mode");
+    forceOffline = true;
   }
-  if (!SD.begin()) {
-    Serial.println("Failed to mount SD");
-  } else {
-    Serial.println(F("SD initialised."));
-    SD_present = true;
-    listDir(SD, "/", 0);
+  if (digitalRead(DS02) == LOW) {
+    Serial.print("Dip Switch #2 ON");
+    Serial.println(" - OTA mode (NYI)");
   }
-  checkProgBoot();
-  connectWifi();
-  maintainConnnectionMQTT();
+  if (digitalRead(DS03) == LOW) {
+    Serial.print("Dip Switch #3 ON");
+    Serial.println(" - Silent mode");
+    forceSilent = true;
+  }
+  if (digitalRead(DS04) == LOW) {
+    Serial.print("Dip Switch #4 ON");
+    Serial.println(" - Garage mode");
+  }
+
+  // Should load default config if run for the first time
+  Serial.println(F("Loading configuration..."));
+  loadFSJSON(config_filename, config);
+
+  if (forceOffline == false) {
+    connectWifi();
+    startWebServer();
+  }
+    
+  ob_pixel.begin(); //Setting onboard neopixel throws RMT errors for some reason
+  pixel.begin();
+
+  // instantiate listeners and initialize Wiegand reader, configure pins
+  wiegand.onReceive(receivedData, "Card read: ");
+  wiegand.onReceiveError(receivedDataError, "Card read error: ");
+  wiegand.begin(Wiegand::LENGTH_ANY, true);
+  attachInterrupt(digitalPinToInterrupt(wiegand_0_pin), pinStateChanged, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(wiegand_1_pin), pinStateChanged, CHANGE);
+  pinStateChanged();
+  ledcAttachChannel(buzzer_pin, freq, resolution, channel);
+  setOBPixAmber();
+  setPixBlue();
 }
 
 // --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP ---
 
 void loop() {
-  if (WiFi.status() == WL_CONNECTED) {
-    if (disconCount > 0) {
-      Serial.println("Wifi available - Restarting");
-      ESP.restart();
-    }
-    //Online Functions
-    DL32server.handleClient();
-    maintainConnnectionMQTT();
-    checkMQTT();
-    disconCount = 0;
-  } else {
-    idlcol = 4;
-    if (disconCount > 10000) {
+  if (forceOffline == false) {
+    if (WiFi.status() == WL_CONNECTED) {
+      if (disconCount > 0) {
+        Serial.println("Wifi available - Restarting");
+        ESP.restart();
+      }
+      //Online Functions
+      webServer.handleClient();
+      maintainConnnectionMQTT();
+      checkMqtt();
       disconCount = 0;
-      Serial.println("WiFi reconnection attempt...");
-      connectWifi();
+    } else {
+      if (disconCount > 100000) {
+        disconCount = 0;
+        Serial.println("WiFi reconnection attempt...");
+         connectWifi();
+      }
+      else if (disconCount == 0) {
+        Serial.println("Disconnected from WiFi");
+      }
+      disconCount++;
     }
-    else if (disconCount == 0) {
-      Serial.println("Disconnected from WiFi");
-    }
-    disconCount++;
+    checkMqtt();
   }
+  
   //Offline Functions
-  checkProg();
+  checkKey();
   checkMagSensor();
-  checkAdd();
+  checkSerialCmd();
   checkExit();
+  checkAUX();
   checkBell();
-  checkCard();
-  setLEDColor(idlcol);
-  delay(25);
+  //checkWg();
+  watchdogCount = 0;
+  delay(10);
 }
