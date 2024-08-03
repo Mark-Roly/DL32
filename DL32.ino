@@ -1,15 +1,17 @@
 /*
 
   DL32 v3 by Mark Booth
-  For use with DL32 S3
-  Last updated 18/07/2024
+  For use with Wemos S3 and DL32 S3 rev 20231220
+  Last updated 03/08/2024
+
+  https://github.com/Mark-Roly/DL32/
 
   Upload settings:
-    Upload speed 921600
-    USB Mode : Hardware CDC and JTAG
-    USB CDC on Boot : Enabled
-    USB Firmware MSC : disabled
-    USB DFU on boot : disabled
+    Upload speed: 921600
+    USB Mode: Hardware CDC and JTAG
+    USB CDC on Boot: Enabled
+    USB Firmware MSC on boot: disabled
+    USB DFU on boot: disabled
     Upload Mode: UART0/Hardware CDC
     CPU frequency 240Mhz
     Partition scheme: Default 4mb with ffat
@@ -64,8 +66,10 @@ struct Config {
   char mqtt_enabled[8];
   char mqtt_server[32];
   char mqtt_port[8];
+  char mqtt_topic[32];
   char mqtt_cmnd_topic[32];
   char mqtt_stat_topic[32];
+  char mqtt_keys_topic[32];
   char mqtt_client_name[32];
   char mqtt_auth[8];
   char mqtt_user[32];
@@ -82,6 +86,7 @@ struct Config {
 // Durations for each unlock type (eg: unlock for 10 seconds if unlocked via MQTT)
 #define exitButDur 5
 #define httpDur 5
+#define keypadDur 15 //tenths-of-seconds
 #define keyDur 5
 #define mqttDur 10
 #define addKeyDur 10
@@ -91,8 +96,7 @@ struct Config {
 // Number of neopixels used
 #define NUMPIXELS 1
 
-// debug
-#define codeVersion 20240718
+#define codeVersion 20240803
 
 long lastMsg = 0;
 long disconCount = 0;
@@ -103,7 +107,6 @@ String scannedKey = "";
 
 boolean validKeyRead = false;
 boolean forceOffline = false;
-boolean forceSilent = false;
 boolean invalidKeyRead = false;
 boolean SD_present = false;
 boolean FFat_present = false;
@@ -140,7 +143,6 @@ long lastMQTTReconnectAttempt = 0;
 
 // --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions ---
 
-
 void ISRwatchdog() {
   watchdogCount++;
   if (watchdogCount == WDT_TIMEOUT) {
@@ -156,15 +158,15 @@ boolean keyAuthorized(String key) {
   File keysFile = FFat.open(keys_filename, "r");
   int charMatches = 0;
   char tagBuffer[11];
-  Serial.print("key: ");
+  Serial.print("keyz: ");
   Serial.println(key);
   while (keysFile.available()) {
-    int cardDigits = keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer));
+    int cardDigits = (keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer))-1);
     //Serial.print("card digits = ");
     //Serial.println(String(cardDigits));
     tagBuffer[cardDigits] = 0;
     charMatches = 0;
-    for (int loopCount = 0; loopCount < (cardDigits - 1); loopCount++) {
+    for (int loopCount = 0; loopCount < (cardDigits); loopCount++) {
       //Serial.print("comparing ");
       //Serial.print(key[loopCount]);
       //Serial.print(" with ");
@@ -173,10 +175,14 @@ boolean keyAuthorized(String key) {
         charMatches++;
       }
     }
-    if (charMatches == cardDigits - 1) {
-      //Serial.print(tagBuffer);
-      //Serial.print(" - ");
-      //Serial.println("MATCH");
+    //Serial.print("charMatches: ");
+    //Serial.println(charMatches);
+    //Serial.print("cardDigits: ");
+    //Serial.println(cardDigits);
+    if (charMatches == cardDigits) {
+      Serial.print(tagBuffer);
+      Serial.print(" - ");
+      Serial.println("MATCH");
       //matchedCards++;
       return true;
     } else {
@@ -191,10 +197,42 @@ boolean keyAuthorized(String key) {
 void checkKey() {
   noInterrupts();
   wiegand.flush();
+  String keypadBuffer;
+  int keypadCounter = 0;
   interrupts();
   if (scannedKey == "") {
     return;
   }
+  
+  //function to recognize keypad input
+  if ((scannedKey.length()) == 2) {
+    Serial.print("Keypad entry: ");
+    keypadBuffer += scannedKey.substring(1);
+    scannedKey = "";
+    while ((keypadCounter < keypadDur) && (keypadBuffer.length() < 12)) {
+      noInterrupts();
+      wiegand.flush();
+      interrupts();
+      delay(100);
+      keypadCounter++;
+      if ((scannedKey.length()) == 2) {
+        keypadCounter = 0;
+        if ((scannedKey.substring(1)) == "B") {
+          keypadCounter = keypadDur;
+        } else {
+          keypadBuffer += scannedKey.substring(1);
+        }
+        scannedKey = "";
+      }
+    }
+    Serial.println(keypadBuffer);
+    scannedKey = keypadBuffer;
+  }
+
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(config.mqtt_keys_topic, scannedKey.c_str());  
+  } 
+
   bool match_found = keyAuthorized(scannedKey);
   if ((match_found == false) and (add_mode)) {
     appendlnFile(FFat, keys_filename, scannedKey.c_str());
@@ -437,8 +475,15 @@ void loadFSJSON(const char* config_filename, Config& config) {
   strlcpy(config.mqtt_enabled, doc["mqtt_enabled"] | "false", sizeof(config.mqtt_enabled));
   strlcpy(config.mqtt_server, doc["mqtt_server"] | "null_mqtt_server", sizeof(config.mqtt_server));
   strlcpy(config.mqtt_port, doc["mqtt_port"] | "1883", sizeof(config.mqtt_port));
-  strlcpy(config.mqtt_cmnd_topic, doc["mqtt_cmnd_topic"] | "DEFAULT_dl32s3/cmnd", sizeof(config.mqtt_cmnd_topic));
-  strlcpy(config.mqtt_stat_topic, doc["mqtt_stat_topic"] | "DEFAULT_dl32s3/stat", sizeof(config.mqtt_stat_topic));
+  strlcpy(config.mqtt_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_topic));
+  
+  strlcpy(config.mqtt_stat_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_stat_topic));
+  strlcpy(config.mqtt_cmnd_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_cmnd_topic));
+  strlcpy(config.mqtt_keys_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_keys_topic));
+  strcat(config.mqtt_stat_topic, "/stat");
+  strcat(config.mqtt_cmnd_topic, "/cmnd");
+  strcat(config.mqtt_keys_topic, "/keys");
+  
   strlcpy(config.mqtt_client_name, doc["mqtt_client_name"] | "DEFAULT_dl32s3", sizeof(config.mqtt_client_name));
   strlcpy(config.mqtt_auth, doc["mqtt_auth"] | "true", sizeof(config.mqtt_auth));
   strlcpy(config.mqtt_user, doc["mqtt_user"] | "mqtt", sizeof(config.mqtt_user));
@@ -627,7 +672,9 @@ void unlock(int secs) {
   Serial.println(" Seconds");
   digitalWrite(lockRelay_pin, HIGH);
   setPixGreen();
-  MQTTclient.publish(config.mqtt_stat_topic, "unlocked");
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(config.mqtt_stat_topic, "unlocked");
+  }
   playUnlockTone();
   while (loops < secs) {
     loops++;
@@ -636,7 +683,9 @@ void unlock(int secs) {
   Serial.println("Lock");
   setPixBlue();
   digitalWrite(lockRelay_pin, LOW);
-  MQTTclient.publish(config.mqtt_stat_topic, "locked");
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(config.mqtt_stat_topic, "locked");
+  }
 }
 
 // --- Button Functions --- Button Functions --- Button Functions --- Button Functions --- Button Functions --- Button Functions ---
@@ -654,7 +703,9 @@ int checkExit() {
     }
     if (count > 5 && count < 501){
       Serial.println("Exit Button Pressed");
-      MQTTclient.publish(config.mqtt_stat_topic, "button pressed");
+      if (MQTTclient.connected()) {
+        MQTTclient.publish(config.mqtt_stat_topic, "button pressed");
+      }
       unlock(exitButDur);
       return 0;
     }
@@ -666,7 +717,9 @@ void checkAUX() {
   if (digitalRead(AUXButton_pin) == LOW) {
     long count = 0;
     Serial.println("AUX Button Pressed");
-    MQTTclient.publish(config.mqtt_stat_topic, "AUX button pressed");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "AUX button pressed");
+    }
     while (digitalRead(AUXButton_pin) == LOW && (count < 500)) {
       count++;
       delay(10);
@@ -690,7 +743,9 @@ void checkBell() {
   if (digitalRead(bellButton_pin) == LOW) {
     Serial.println("");
     Serial.print("Bell Pressed - ");
-    MQTTclient.publish(config.mqtt_stat_topic, "bell pressed");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "bell pressed");
+    }
     ringBell();
   }
 }
@@ -710,7 +765,7 @@ void checkMagSensor() {
 // --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions ---
 
 void playUnlockTone() {
-  if (forceSilent == false) {
+  if (digitalRead(DS03) == HIGH) {
     ledcWriteTone(buzzer_pin, 5000);
     delay(100);
     ledcWriteTone(buzzer_pin, 0);
@@ -722,7 +777,7 @@ void playUnlockTone() {
 }
 
 void playUnauthorizedTone() {
-  if (forceSilent == false) {
+  if (digitalRead(DS03) == HIGH) {
     ledcWriteTone(buzzer_pin, 700);
     delay(200);
     ledcWriteTone(buzzer_pin, 400);
@@ -732,7 +787,7 @@ void playUnauthorizedTone() {
 }
 
 void playAddModeTone() {
-  if (forceSilent == false) {
+  if (digitalRead(DS03) == HIGH) {
     ledcWriteTone(buzzer_pin, 6500);
     delay(80);
     ledcWriteTone(buzzer_pin, 0);
@@ -748,7 +803,7 @@ void playAddModeTone() {
 }
 
 void ringBell() {
-  if (forceSilent == false) {
+  if (digitalRead(DS03) == HIGH) {
     Serial.println("Ringing bell");
     for (int i = 0; i <= 3; i++) {
       for (int i = 0; i <= 25; i++) {
@@ -771,7 +826,9 @@ void startMQTTConnection() {
   MQTTclient.setServer(config.mqtt_server, String(config.mqtt_port).toInt());
   MQTTclient.setCallback(MQTTcallback);
   delay(100);
-  MQTTclient.publish(config.mqtt_stat_topic, "locked", true);
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(config.mqtt_stat_topic, "locked", true);
+  }
   lastMQTTReconnectAttempt = 0;
 }
 
@@ -1028,7 +1085,9 @@ void MainPage() {
 
 void UnlockHTTP() {
   Serial.println("Unlocked via HTTP");
-  MQTTclient.publish(config.mqtt_stat_topic, "HTTP Unlock");
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(config.mqtt_stat_topic, "HTTP Unlock");
+  }  
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Door Unlocked</textarea>");
@@ -1248,6 +1307,7 @@ void siteHeader() {
   //Orange Theme
   pageContent += F("div {width: 350px; margin: 20px auto; text-align: center; border: 3px solid #ff3200; background-color: #555555; left: auto; right: auto;}");
   pageContent += F(".header {font-family: Arial, Helvetica, sans-serif; font-size: 20px; color: #ff3200;}");
+  pageContent += F(".smalltext {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #ff3200;}");
   pageContent += F("button {width: 300px; background-color: #ff3200; border: none; text-decoration: none;}");
   pageContent += F("button:hover {width: 300px; background-color: #ef2200; border: none; text-decoration: none;}");
   pageContent += F("h1 {font-family: Arial, Helvetica, sans-serif; color: #ff3200;}");
@@ -1262,14 +1322,14 @@ void siteHeader() {
 }
 
 void siteButtons() {
-  pageContent += F("<a class='header'>Device Control<a/>");
+  pageContent += F("<a class='header'>Device Control</a>");
   pageContent += F("<a href='/UnlockHTTP'><button>HTTP Unlock</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/RingBellHTTP'><button>Ring Bell</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/restartESPHTTP'><button>Restart DL32</button></a>");
   pageContent += F("<br/> <br/>");
-  pageContent += F("<a class='header'>Key List<a/>");
+  pageContent += F("<a class='header'>Key List</a>");
   pageContent += F("<a href='/DownloadKeysHTTP'><button>Download key file</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/OutputKeys'><button>Output keys to Serial</button></a>");
@@ -1280,7 +1340,7 @@ void siteButtons() {
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeKeysHTTP'><button>Purge stored keys</button></a>");
   pageContent += F("<br/> <br/>");
-  pageContent += F("<a class='header'>Config File<a/>");
+  pageContent += F("<a class='header'>Config File</a>");
   pageContent += F("<a href='/DownloadConfigHTTP'><button>Download config file</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/OutputConfig'><button>Output config to Serial</button></a>");
@@ -1291,32 +1351,43 @@ void siteButtons() {
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeConfigHTTP'><button>Purge configuration</button></a>");
   pageContent += F("<br/> <br/>");
-  pageContent += F("<a class='header'>Filesystem Operations<a/>");
+  pageContent += F("<a class='header'>Filesystem Operations</a>");
   pageContent += F("<a href='/OutputFSHTTP'><button>Output FFat Contents to Serial</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/DisplayFSHTTP'><button style='background-color: #999999; color: #777777';>Display FFat contents in page</button></a>");
-  pageContent += F("<br/>");
+  //pageContent += F("<a href='/DisplayFSHTTP'><button style='background-color: #999999; color: #777777';>Display FFat contents in page</button></a>");
+  //pageContent += F("<br/>");
   pageContent += F("<a href='/OutputSDFSHTTP'><button>Output SD FS Contents to Serial</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/DisplaySDFSHTTP'><button style='background-color: #999999; color: #777777';>Display SD FS contents in page</button></a>");
-  pageContent += F("<br/><br/>");
-  pageContent += F("<a class='header'>IP Addressing<a/>");
-  pageContent += F("<a href='/displayAddressingHTTP'><button style='background-color: #999999; color: #777777';>Show IP addressing</button></a>");
+  //pageContent += F("<a href='/DisplaySDFSHTTP'><button style='background-color: #999999; color: #777777';>Display SD FS contents in page</button></a>");
   pageContent += F("<br/>");
+  pageContent += F("<a class='header'>IP Addressing</a>");
+  //pageContent += F("<a href='/displayAddressingHTTP'><button style='background-color: #999999; color: #777777';>Show IP addressing</button></a>");
+  //pageContent += F("<br/>");
   pageContent += F("<a href='/outputAddressingHTTP'><button>Output IP addressing to Serial</button></a>");
-  pageContent += F("<br/>");
-  pageContent += F("<a href='/saveAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Save current addressing as static</button></a>");
-  pageContent += F("<br/>");
-  pageContent += F("<a href='/downloadAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Download static addressing file</button></a>");
-  pageContent += F("<br/>");
-  pageContent += F("<a href='/addressingStaticSDtoFFatHTTP'><button style='background-color: #999999; color: #777777';>Upload static addressing SD to DL32</button></a>");
-  pageContent += F("<br/>");
-  pageContent += F("<a href='/purgeAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Purge static addressing</button></a>");
+  //pageContent += F("<br/>");
+  //pageContent += F("<a href='/saveAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Save current addressing as static</button></a>");
+  //pageContent += F("<br/>");
+  //pageContent += F("<a href='/downloadAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Download static addressing file</button></a>");
+  //pageContent += F("<br/>");
+  //pageContent += F("<a href='/addressingStaticSDtoFFatHTTP'><button style='background-color: #999999; color: #777777';>Upload static addressing SD to DL32</button></a>");
+  //pageContent += F("<br/>");
+  //pageContent += F("<a href='/purgeAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Purge static addressing</button></a>");
   pageContent += F("<br/>");
 }
 
 void siteFooter() {
-  pageContent += F(" <br/><br/> </div>");
+  IPAddress ip_addr = WiFi.localIP();
+  pageContent += F("<br/>");
+  pageContent += F("<a class='smalltext'>");
+  pageContent += F("IP: ");
+  pageContent += (String(ip_addr[0]) + "." + String(ip_addr[1]) + "." + String(ip_addr[2]) + "." + String(ip_addr[3]));
+  pageContent += F("</a>");
+  pageContent += F("&nbsp;&nbsp;");
+  pageContent += F("<a class='smalltext'>");
+  pageContent += F("ver: ");
+  pageContent += (String(codeVersion));
+  pageContent += F("</a>");
+  pageContent += F(" <br/></div>");
   pageContent += F("</body></html>");
 }
 
@@ -1392,7 +1463,6 @@ void setup() {
   if (digitalRead(DS03) == LOW) {
     Serial.print("Dip Switch #3 ON");
     Serial.println(" - Silent mode");
-    forceSilent = true;
   }
   if (digitalRead(DS04) == LOW) {
     Serial.print("Dip Switch #4 ON");
