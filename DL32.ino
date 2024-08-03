@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 rev 20231220
-  Last updated 03/08/2024
+  Last updated 04/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -96,7 +96,7 @@ struct Config {
 // Number of neopixels used
 #define NUMPIXELS 1
 
-#define codeVersion 20240803
+#define codeVersion 20240804
 
 long lastMsg = 0;
 long disconCount = 0;
@@ -158,7 +158,7 @@ boolean keyAuthorized(String key) {
   File keysFile = FFat.open(keys_filename, "r");
   int charMatches = 0;
   char tagBuffer[11];
-  Serial.print("keyz: ");
+  Serial.print("Checking key: ");
   Serial.println(key);
   while (keysFile.available()) {
     int cardDigits = (keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer))-1);
@@ -180,9 +180,9 @@ boolean keyAuthorized(String key) {
     //Serial.print("cardDigits: ");
     //Serial.println(cardDigits);
     if (charMatches == cardDigits) {
-      Serial.print(tagBuffer);
-      Serial.print(" - ");
-      Serial.println("MATCH");
+      //Serial.print(tagBuffer);
+      //Serial.print(" - ");
+      //Serial.println("MATCH");
       //matchedCards++;
       return true;
     } else {
@@ -201,6 +201,10 @@ void checkKey() {
   int keypadCounter = 0;
   interrupts();
   if (scannedKey == "") {
+    return;
+  } else if ((scannedKey.substring(1)) == "A") {
+    ringBell();
+    scannedKey = "";
     return;
   }
   
@@ -252,10 +256,12 @@ void checkKey() {
     unlock(keyDur);
   } else {
     add_mode = false;
-    Serial.println("Unauthorized Key!");
+    Serial.print("Key ");
+    Serial.print(scannedKey);
+    Serial.println(" is unauthorized!");
     setPixRed();
     playUnauthorizedTone();
-    delay(1000);
+    delay(unrecognizedKeyDur*1000);
     setPixBlue();
   }
   scannedKey = "";
