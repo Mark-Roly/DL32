@@ -116,6 +116,7 @@ String serialCmd;
 
 String pageContent = "";
 const char* config_filename = "/dl32.json";
+const char* addressing_filename = "/addressing.json";
 const char* keys_filename = "/keys.txt";
 
 // buzzer settings
@@ -513,12 +514,13 @@ void configSDtoFFat() {
     return;
   }
   Serial.println("Config file successfuly copied from SD to FFat");
+  ESP.restart();
 }
 
 void addressingSDtoFS() {
-  if ((SD_present == true) && (SD.exists("/addressing.json"))) {
-    File sourceFile = SD.open("/addressing.json");
-    File destFile = FFat.open("/addressing.json", FILE_WRITE);
+  if ((SD_present == true) && (SD.exists(addressing_filename))) {
+    File sourceFile = SD.open(addressing_filename);
+    File destFile = FFat.open(addressing_filename, FILE_WRITE);
     static uint8_t buf[1];
     while ( sourceFile.read( buf, 1) ) {
       destFile.write( buf, 1 );
@@ -531,6 +533,7 @@ void addressingSDtoFS() {
     return;
   }
   Serial.println("Addressing file successfuly copied from SD to FFat");
+  ESP.restart();
 }
 
 void keysSDtoFFat() {
@@ -549,6 +552,7 @@ void keysSDtoFFat() {
     Serial.println("No SD Card Mounted or no such file");
     return;
   }
+  ESP.restart();
 }
 
 void keysFStoSD() {
@@ -567,6 +571,7 @@ void keysFStoSD() {
     Serial.println("No SD Card Mounted or no such file");
     return;
   }
+  ESP.restart();
 }
 
 int addKeyMode() {
@@ -916,10 +921,14 @@ void checkSerialCmd() {
   if (Serial.available()) {
     serialCmd = Serial.readStringUntil('\n');
     serialCmd.trim();
+    Serial.print("Command: ");
+    Serial.println(serialCmd);
     if (serialCmd.equals("list_ffat")) {
       listDir(FFat, "/", 0);
     } else if (serialCmd.equals("list_sd")) {
       listDir(SD, "/", 0);
+    } else if (serialCmd.equals("list_keys")) {
+      OutputKeys();
     } else if (serialCmd.equals("read_config")) {
       readFile(FFat, config_filename);
     } else if (serialCmd.equals("restart")) {
@@ -933,8 +942,6 @@ void checkSerialCmd() {
     } else {
       Serial.println("bad command");
     }
-    Serial.print("Command: ");
-    Serial.println(serialCmd);
   }
 }
 
@@ -1208,13 +1215,13 @@ void saveAddressingStaticHTTP() {
 }
 
 void downloadAddressingStaticHTTP() {
-  int result = FFat_file_download("addressing.json");
+  int result = FFat_file_download(addressing_filename);
   SendHTML_Header();
   siteButtons();
   if (result == 0) {
-    pageContent += F("<br/> <textarea readonly>Downloading addressing.json</textarea>");
+    pageContent += F("<br/> <textarea readonly>Downloading addressing file</textarea>");
   } else {
-    pageContent += F("<br/> <textarea readonly>Unable to download addressing.json</textarea>");
+    pageContent += F("<br/> <textarea readonly>Unable to download addressing file</textarea>");
   }
   siteFooter();
   SendHTML_Content();
@@ -1232,7 +1239,7 @@ void addressingStaticSDtoFFatHTTP() {
 }
 
 void purgeAddressingStaticHTTP() {
-  deleteFile(FFat, "/addressing.json");
+  deleteFile(FFat, addressing_filename);
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>static addressing purged</textarea>");
