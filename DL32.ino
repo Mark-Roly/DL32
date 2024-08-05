@@ -2,21 +2,36 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 rev 20231220
-  Last updated 04/08/2024
+  Last updated 05/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
   Upload settings:
-    Upload speed: 921600
-    USB Mode: Hardware CDC and JTAG
     USB CDC on Boot: Enabled
-    USB Firmware MSC on boot: disabled
-    USB DFU on boot: disabled
+    CPU frequency: 240Mhz (WiFi)
+    USB DFU on boot: Disabled
+    USB Firmware MSC on boot: Disabled
+    Partition Scheme: Default 4mb with ffat
     Upload Mode: UART0/Hardware CDC
-    CPU frequency 240Mhz
-    Partition scheme: Default 4mb with ffat
-    
+    Upload speed: 921600
+    USB Mode: Hardware CDC and JTAG    
+  
+  DIP Switch settings:
+    DS01 = Offline mode
+    DS02 = FailSafe Strike mode
+    DS03 = Silent mode
+    DS04 = Garage mode
+
+  SD card pins:
+    3.0 SD card Pins
+    CD DAT3 CS 34
+    CMD DI DIN MOSI 36
+    CLK SCLK 38
+    DAT0 D0 MISO 35
+
 */
+
+#define codeVersion 20240805
 
 // Include Libraries
 #include <Arduino.h>
@@ -76,19 +91,13 @@ struct Config {
   char mqtt_password[32];
 };
 
-// sd card pins:
-// 3.0 SD card Pins
-// CD DAT3 CS 34
-// CMD DI DIN MOSI 36
-// CLK SCLK 38
-// DAT0 D0 MISO 35
-
 // Durations for each unlock type (eg: unlock for 10 seconds if unlocked via MQTT)
 #define exitButDur 5
 #define httpDur 5
 #define keypadDur 15 //tenths-of-seconds
 #define keyDur 5
 #define mqttDur 10
+#define garageDur 500
 #define addKeyDur 10
 #define unrecognizedKeyDur 5
 #define WDT_TIMEOUT 60
@@ -96,14 +105,13 @@ struct Config {
 // Number of neopixels used
 #define NUMPIXELS 1
 
-#define codeVersion 20240804
-
 long lastMsg = 0;
 long disconCount = 0;
 char msg[50];
 int value = 0;
 int add_count = 0;
 String scannedKey = "";
+String serialCmd;
 
 boolean validKeyRead = false;
 boolean forceOffline = false;
@@ -111,8 +119,8 @@ boolean invalidKeyRead = false;
 boolean SD_present = false;
 boolean FFat_present = false;
 boolean doorOpen = true;
+boolean failSecure = true;
 boolean add_mode = false;
-String serialCmd;
 
 String pageContent = "";
 const char* config_filename = "/dl32.json";
@@ -143,7 +151,6 @@ Ticker secondTick;
 long lastMQTTReconnectAttempt = 0;
 
 // --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions ---
-
 void ISRwatchdog() {
   watchdogCount++;
   if (watchdogCount == WDT_TIMEOUT) {
@@ -576,6 +583,7 @@ void keysFStoSD() {
 
 int addKeyMode() {
   playAddModeTone();
+  setPixPurple();
   Serial.println("Add Key mode - Waiting for key");
   add_count = 0;
   add_mode = true;
@@ -590,6 +598,7 @@ int addKeyMode() {
     add_mode = false;
     Serial.println("No new key added");
   }
+  setPixBlue();
   return 1;
 }
 
@@ -611,7 +620,7 @@ void setPixGreen() {
 }
 
 void setPixPurple() {
-  pixel.setPixelColor(0, pixel.Color(10,0,10));
+  pixel.setPixelColor(0, pixel.Color(5,0,10));
   pixel.show();
 }
 
@@ -681,7 +690,11 @@ void unlock(int secs) {
   Serial.print("Unlock - ");
   Serial.print(secs);
   Serial.println(" Seconds");
-  digitalWrite(lockRelay_pin, HIGH);
+  if (failSecure) {
+    digitalWrite(lockRelay_pin, HIGH);
+  } else {
+    digitalWrite(lockRelay_pin, LOW);
+  }
   setPixGreen();
   if (MQTTclient.connected()) {
     MQTTclient.publish(config.mqtt_stat_topic, "unlocked");
@@ -693,7 +706,11 @@ void unlock(int secs) {
   }
   Serial.println("Lock");
   setPixBlue();
-  digitalWrite(lockRelay_pin, LOW);
+    if (failSecure) {
+    digitalWrite(lockRelay_pin, LOW);
+  } else {
+    digitalWrite(lockRelay_pin, HIGH);
+  }
   if (MQTTclient.connected()) {
     MQTTclient.publish(config.mqtt_stat_topic, "locked");
   }
@@ -737,6 +754,7 @@ void checkAUX() {
     }
     if (count > 499) {
       setPixPurple();
+      playUploadTone();
       Serial.print("Uploading config file ");
       Serial.print(config_filename);
       Serial.print(" from SD card to FFat, restarting...");
@@ -799,6 +817,30 @@ void playUnauthorizedTone() {
 
 void playAddModeTone() {
   if (digitalRead(DS03) == HIGH) {
+    ledcWriteTone(buzzer_pin, 6500);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 6500);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 6500);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
+  }
+}
+
+void playUploadTone() {
+  if (digitalRead(DS03) == HIGH) {
+    ledcWriteTone(buzzer_pin, 6500);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 6500);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
+    delay(80);
     ledcWriteTone(buzzer_pin, 6500);
     delay(80);
     ledcWriteTone(buzzer_pin, 0);
@@ -1097,16 +1139,12 @@ void MainPage() {
 }
 
 void UnlockHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
   Serial.println("Unlocked via HTTP");
   if (MQTTclient.connected()) {
     MQTTclient.publish(config.mqtt_stat_topic, "HTTP Unlock");
   }  
-  SendHTML_Header();
-  siteButtons();
-  pageContent += F("<br/> <textarea readonly>Door Unlocked</textarea>");
-  siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
   unlock(httpDur);
 }
 
@@ -1140,6 +1178,12 @@ void purgeKeysHTTP() {
   SendHTML_Stop();
 }
 
+void addKeyModeHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
+  addKeyMode();
+}
+
 void purgeConfigHTTP() {
   deleteFile(FFat, config_filename);
   SendHTML_Header();
@@ -1166,13 +1210,9 @@ int FFat_file_download(String filename) {
 }
 
 void RingBellHTTP() {
-  SendHTML_Header();
-  siteButtons();
-  pageContent += F("<br/> <textarea readonly>Ringing bell</textarea>");
-  siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
   ringBell();
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
 }
 
 void displayAddressingHTTP() {
@@ -1342,7 +1382,7 @@ void siteButtons() {
   pageContent += F("<br/>");
   pageContent += F("<a href='/restartESPHTTP'><button>Restart DL32</button></a>");
   pageContent += F("<br/> <br/>");
-  pageContent += F("<a class='header'>Key List</a>");
+  pageContent += F("<a class='header'>Key Management</a>");
   pageContent += F("<a href='/DownloadKeysHTTP'><button>Download key file</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/OutputKeys'><button>Output keys to Serial</button></a>");
@@ -1350,6 +1390,8 @@ void siteButtons() {
   pageContent += F("<a href='/DisplayKeys'><button>Display keys in page</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/keysSDtoFFatHTTP'><button>Upload keys SD to DL32</button></a>");
+  pageContent += F("<br/>");
+  pageContent += F("<a href='/addKeyModeHTTP'><button>Enter add key mode</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeKeysHTTP'><button>Purge stored keys</button></a>");
   pageContent += F("<br/> <br/>");
@@ -1411,6 +1453,7 @@ void startWebServer() {
   webServer.on("/UnlockHTTP", UnlockHTTP);
   webServer.on("/RingBellHTTP", RingBellHTTP);
   webServer.on("/DownloadConfigHTTP", DownloadConfigHTTP);
+  webServer.on("/addKeyModeHTTP", addKeyModeHTTP);
   webServer.on("/purgeKeysHTTP", purgeKeysHTTP);
   webServer.on("/DisplayConfig", DisplayConfig);
   webServer.on("/OutputConfig", OutputConfig);
@@ -1461,25 +1504,31 @@ void setup() {
   pinMode(DS03, INPUT_PULLUP);
   pinMode(DS04, INPUT_PULLUP);
   digitalWrite(buzzer_pin, LOW);
-  digitalWrite(lockRelay_pin, LOW);
 
   // Check Dip Switch states
   if (digitalRead(DS01) == LOW) {
-    Serial.print("Dip Switch #1 ON");
+    Serial.print("DIP Switch #1 ON");
     Serial.println(" - Forced offline mode");
     forceOffline = true;
   }
   if (digitalRead(DS02) == LOW) {
-    Serial.print("Dip Switch #2 ON");
-    Serial.println(" - OTA mode (NYI)");
+    failSecure = false;
+    Serial.print("DIP Switch #2 ON");
+    Serial.println(" - FailSafe Strike mode");
   }
   if (digitalRead(DS03) == LOW) {
-    Serial.print("Dip Switch #3 ON");
+    Serial.print("DIP Switch #3 ON");
     Serial.println(" - Silent mode");
   }
   if (digitalRead(DS04) == LOW) {
-    Serial.print("Dip Switch #4 ON");
+    Serial.print("DIP Switch #4 ON");
     Serial.println(" - Garage mode");
+  }
+
+  if (failSecure) {
+    digitalWrite(lockRelay_pin, LOW);
+  } else {
+    digitalWrite(lockRelay_pin, HIGH);
   }
 
   // Should load default config if run for the first time
