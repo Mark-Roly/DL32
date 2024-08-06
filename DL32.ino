@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 rev 20231220
-  Last updated 05/08/2024
+  Last updated 06/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240805
+#define codeVersion 20240806
 
 // Include Libraries
 #include <Arduino.h>
@@ -121,6 +121,7 @@ boolean FFat_present = false;
 boolean doorOpen = true;
 boolean failSecure = true;
 boolean add_mode = false;
+boolean garage_mode = false;
 
 String pageContent = "";
 const char* config_filename = "/dl32.json";
@@ -687,19 +688,32 @@ int connectWifi() {
 void unlock(int secs) {
   int loops = 0;
   int count = 0;
-  Serial.print("Unlock - ");
-  Serial.print(secs);
-  Serial.println(" Seconds");
+  if (garage_mode) {
+    Serial.println("Toggle garage door");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Toggle garage door");
+    }
+    setPixGreen();
+    digitalWrite(lockRelay_pin, HIGH);
+    playUnlockTone();
+    delay(garageDur);
+    digitalWrite(lockRelay_pin, LOW);
+    setPixBlue();
+  return;
+  }
   if (failSecure) {
     digitalWrite(lockRelay_pin, HIGH);
   } else {
     digitalWrite(lockRelay_pin, LOW);
   }
+  playUnlockTone();
+  Serial.print("Unlock - ");
+  Serial.print(secs);
+  Serial.println(" Seconds");
   setPixGreen();
   if (MQTTclient.connected()) {
     MQTTclient.publish(config.mqtt_stat_topic, "unlocked");
   }
-  playUnlockTone();
   while (loops < secs) {
     loops++;
     delay(1000);
@@ -714,6 +728,74 @@ void unlock(int secs) {
   if (MQTTclient.connected()) {
     MQTTclient.publish(config.mqtt_stat_topic, "locked");
   }
+}
+
+void garage_toggle() {
+  if (garage_mode) {
+    Serial.println("Toggle garage door");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Toggle garage door");
+    }
+    setPixGreen();
+    digitalWrite(lockRelay_pin, HIGH);
+    playUnlockTone();
+    delay(garageDur);
+    digitalWrite(lockRelay_pin, LOW);
+    setPixBlue();
+  }
+  return;
+}
+
+void garage_open() {
+  if (garage_mode && (doorOpen == false)) {
+    Serial.println("Opening garage door");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Opening garage door");
+    }
+    setPixGreen();
+    digitalWrite(lockRelay_pin, HIGH);
+    playUnlockTone();
+    delay(garageDur);
+    digitalWrite(lockRelay_pin, LOW);
+    setPixBlue();
+  } else if  (garage_mode && (doorOpen)) {
+    Serial.println("Door is already open!");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Door is already open!");
+    }
+  } else if (garage_mode == false) {
+    Serial.println("Unit is not in garage mode.");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Unit is not in garage mode.");
+    }
+  }
+  return;
+}
+
+void garage_close() {
+  if ((garage_mode) && (doorOpen)) {
+    Serial.println("Closing garage door");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Closing garage door");
+    }
+    setPixGreen();
+    digitalWrite(lockRelay_pin, HIGH);
+    playUnlockTone();
+    delay(garageDur);
+    digitalWrite(lockRelay_pin, LOW);
+    setPixBlue();
+  } else if  (garage_mode && (doorOpen == false)) {
+    Serial.println("Door is already closed!");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Door is already closed!");
+    }
+  } else if (garage_mode == false) {
+    Serial.println("Unit is not in garage mode.");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Unit is not in garage mode.");
+    }
+  }
+  return;
 }
 
 // --- Button Functions --- Button Functions --- Button Functions --- Button Functions --- Button Functions --- Button Functions ---
@@ -784,10 +866,14 @@ void checkMagSensor() {
   if (doorOpen == true && digitalRead(magSensor_pin) == LOW) {
     //send not that door has closed
     doorOpen = false;
-    Serial.println("Door Opened");
+    Serial.println("Door Closed");
+    //Serial.print("doorOpen == ");
+    //Serial.println(doorOpen);
   } else if (doorOpen == false && digitalRead(magSensor_pin) == HIGH) {
     doorOpen = true;
-    Serial.println("Door Closed");
+    Serial.println("Door Opened");
+    //Serial.print("doorOpen == ");
+    //Serial.println(doorOpen);
   }
 }
 
@@ -795,13 +881,12 @@ void checkMagSensor() {
 
 void playUnlockTone() {
   if (digitalRead(DS03) == HIGH) {
-    ledcWriteTone(buzzer_pin, 5000);
-    delay(100);
-    ledcWriteTone(buzzer_pin, 0);
-    delay(100);
-    ledcWriteTone(buzzer_pin, 5000);
-    delay(100);
-    ledcWriteTone(buzzer_pin, 0);
+    for (int i = 0; i <= 1; i++) {
+      ledcWriteTone(buzzer_pin, 5000);
+      delay(100);
+      ledcWriteTone(buzzer_pin, 0);
+      delay(100);
+    }
   }
 }
 
@@ -817,41 +902,23 @@ void playUnauthorizedTone() {
 
 void playAddModeTone() {
   if (digitalRead(DS03) == HIGH) {
-    ledcWriteTone(buzzer_pin, 6500);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 0);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 6500);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 0);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 6500);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 0);
+    for (int i = 0; i <= 2; i++) {
+      ledcWriteTone(buzzer_pin, 6500);
+      delay(80);
+      ledcWriteTone(buzzer_pin, 0);
+      delay(80);
+    }
   }
 }
 
 void playUploadTone() {
   if (digitalRead(DS03) == HIGH) {
-    ledcWriteTone(buzzer_pin, 6500);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 0);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 6500);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 0);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 6500);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 0);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 6500);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 0);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 6500);
-    delay(80);
-    ledcWriteTone(buzzer_pin, 0);
+    for (int i = 0; i <= 4; i++) {
+      ledcWriteTone(buzzer_pin, 6500);
+      delay(80);
+      ledcWriteTone(buzzer_pin, 0);
+      delay(80);
+    }
   }
 }
 
@@ -918,15 +985,36 @@ void MQTTcallback(char* topic, byte* payload, unsigned int length) {
   }
   Serial.println();
 
-  // Unlock if first letter of payload is "u"
-  if ((char)payload[0] == 'u') {
+  // Unlock if payload is "unlock"
+  if (!strncmp((char *)payload, "unlock", 6)) {
     Serial.println("Unlocked via MQTT");
     MQTTclient.publish(config.mqtt_stat_topic, "lock opened via MQTT");
     unlock(mqttDur);
-  } else if ((char)payload[0] == 'b') {
+  } else if ((!strncmp((char *)payload, "garage_toggle", 13)) && garage_mode) {
+    Serial.println("Toggling garage door");
+    MQTTclient.publish(config.mqtt_stat_topic, "Toggling garage door");
+    garage_toggle();
+  } else if ((!strncmp((char *)payload, "garage_open", 11)) && garage_mode) {
+    Serial.println("Open garage door...");
+    MQTTclient.publish(config.mqtt_stat_topic, "Open garage door..");
+    garage_open();
+  } else if ((!strncmp((char *)payload, "garage_close", 12)) && garage_mode) {
+    Serial.println("Close garage door...");
+    MQTTclient.publish(config.mqtt_stat_topic, "Close garage door...");
+    garage_close();
+  } else if (!strncmp((char *)payload, "bell", 4)) {
     Serial.println("Bell via MQTT");
     MQTTclient.publish(config.mqtt_stat_topic, "Bell rung via MQTT");
     ringBell();
+  } else if (!strncmp((char *)payload, "add_key_mode", 12)) {
+    Serial.println("add key mode via MQTT");
+    MQTTclient.publish(config.mqtt_stat_topic, "Add key mode via MQTT");
+    addKeyMode();
+  } else if (!strncmp((char *)payload, "restart", 7)) {
+    Serial.println("Restart via MQTT");
+    MQTTclient.publish(config.mqtt_stat_topic, "Restart via MQTT");
+    Serial.println("Restarting device...");
+    ESP.restart();
   } else {
     Serial.println("");
     Serial.print("Message not recognized: ");
@@ -971,6 +1059,18 @@ void checkSerialCmd() {
       listDir(SD, "/", 0);
     } else if (serialCmd.equals("list_keys")) {
       OutputKeys();
+    } else if (serialCmd.equals("purge_keys")) {
+      deleteFile(FFat, keys_filename);
+    } else if (serialCmd.equals("purge_config")) {
+      deleteFile(FFat, config_filename);
+    } else if (serialCmd.equals("add_key_mode")) {
+      addKeyMode();
+    } else if (serialCmd.equals("ring_bell")) {
+      ringBell();
+    } else if (serialCmd.equals("copy_keys_sd_to_ffat")) {
+      keysSDtoFFat();
+    } else if (serialCmd.equals("copy_config_sd_to_ffat")) {
+      configSDtoFFat();
     } else if (serialCmd.equals("read_config")) {
       readFile(FFat, config_filename);
     } else if (serialCmd.equals("restart")) {
@@ -1376,7 +1476,7 @@ void siteHeader() {
 
 void siteButtons() {
   pageContent += F("<a class='header'>Device Control</a>");
-  pageContent += F("<a href='/UnlockHTTP'><button>HTTP Unlock</button></a>");
+  pageContent += F("<a href='/UnlockHTTP'><button>Unlock</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/RingBellHTTP'><button>Ring Bell</button></a>");
   pageContent += F("<br/>");
@@ -1385,8 +1485,8 @@ void siteButtons() {
   pageContent += F("<a class='header'>Key Management</a>");
   pageContent += F("<a href='/DownloadKeysHTTP'><button>Download key file</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/OutputKeys'><button>Output keys to Serial</button></a>");
-  pageContent += F("<br/>");
+  //pageContent += F("<a href='/OutputKeys'><button>Output keys to Serial</button></a>");
+  //pageContent += F("<br/>");
   pageContent += F("<a href='/DisplayKeys'><button>Display keys in page</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/keysSDtoFFatHTTP'><button>Upload keys SD to DL32</button></a>");
@@ -1398,27 +1498,27 @@ void siteButtons() {
   pageContent += F("<a class='header'>Config File</a>");
   pageContent += F("<a href='/DownloadConfigHTTP'><button>Download config file</button></a>");
   pageContent += F("<br/>");
-  pageContent += F("<a href='/OutputConfig'><button>Output config to Serial</button></a>");
-  pageContent += F("<br/>");
+  //pageContent += F("<a href='/OutputConfig'><button>Output config to Serial</button></a>");
+  //pageContent += F("<br/>");
   pageContent += F("<a href='/DisplayConfig'><button>Display config in page</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/configSDtoFFatHTTP'><button>Upload config SD to DL32</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeConfigHTTP'><button>Purge configuration</button></a>");
-  pageContent += F("<br/> <br/>");
-  pageContent += F("<a class='header'>Filesystem Operations</a>");
-  pageContent += F("<a href='/OutputFSHTTP'><button>Output FFat Contents to Serial</button></a>");
   pageContent += F("<br/>");
+  //pageContent += F("<a class='header'>Filesystem Operations</a>");
+  //pageContent += F("<a href='/OutputFSHTTP'><button>Output FFat Contents to Serial</button></a>");
+  //pageContent += F("<br/>");
   //pageContent += F("<a href='/DisplayFSHTTP'><button style='background-color: #999999; color: #777777';>Display FFat contents in page</button></a>");
   //pageContent += F("<br/>");
-  pageContent += F("<a href='/OutputSDFSHTTP'><button>Output SD FS Contents to Serial</button></a>");
-  pageContent += F("<br/>");
+  //pageContent += F("<a href='/OutputSDFSHTTP'><button>Output SD FS Contents to Serial</button></a>");
+  //pageContent += F("<br/>");
   //pageContent += F("<a href='/DisplaySDFSHTTP'><button style='background-color: #999999; color: #777777';>Display SD FS contents in page</button></a>");
-  pageContent += F("<br/>");
-  pageContent += F("<a class='header'>IP Addressing</a>");
+  //pageContent += F("<br/>");
+  //pageContent += F("<a class='header'>IP Addressing</a>");
   //pageContent += F("<a href='/displayAddressingHTTP'><button style='background-color: #999999; color: #777777';>Show IP addressing</button></a>");
   //pageContent += F("<br/>");
-  pageContent += F("<a href='/outputAddressingHTTP'><button>Output IP addressing to Serial</button></a>");
+  //pageContent += F("<a href='/outputAddressingHTTP'><button>Output IP addressing to Serial</button></a>");
   //pageContent += F("<br/>");
   //pageContent += F("<a href='/saveAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Save current addressing as static</button></a>");
   //pageContent += F("<br/>");
@@ -1427,7 +1527,7 @@ void siteButtons() {
   //pageContent += F("<a href='/addressingStaticSDtoFFatHTTP'><button style='background-color: #999999; color: #777777';>Upload static addressing SD to DL32</button></a>");
   //pageContent += F("<br/>");
   //pageContent += F("<a href='/purgeAddressingStaticHTTP'><button style='background-color: #999999; color: #777777';>Purge static addressing</button></a>");
-  pageContent += F("<br/>");
+  //pageContent += F("<br/>");
 }
 
 void siteFooter() {
@@ -1523,6 +1623,7 @@ void setup() {
   if (digitalRead(DS04) == LOW) {
     Serial.print("DIP Switch #4 ON");
     Serial.println(" - Garage mode");
+    garage_mode = true;
   }
 
   if (failSecure) {
@@ -1590,7 +1691,6 @@ void loop() {
   checkExit();
   checkAUX();
   checkBell();
-  //checkWg();
   watchdogCount = 0;
   delay(10);
 }
