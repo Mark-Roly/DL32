@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 rev 20231220
-  Last updated 06/08/2024
+  Last updated 07/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240806
+#define codeVersion 20240807
 
 // Include Libraries
 #include <Arduino.h>
@@ -107,6 +107,8 @@ struct Config {
 
 long lastMsg = 0;
 long disconCount = 0;
+long lastMQTTConnectAttempt = 0;
+long lastWifiConnectAttempt = 0;
 char msg[50];
 int value = 0;
 int add_count = 0;
@@ -147,9 +149,6 @@ WebServer webServer(80);
 PubSubClient MQTTclient(esp32Client);
 Wiegand wiegand;
 Ticker secondTick;
-
-// counter for mqtt reconnection attempts
-long lastMQTTReconnectAttempt = 0;
 
 // --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions --- Watchdog Functions ---
 void ISRwatchdog() {
@@ -518,6 +517,7 @@ void configSDtoFFat() {
     sourceFile.close();
   } else {
     Serial.println("");
+    playUnauthorizedTone();
     Serial.println("No SD Card Mounted or no such file");
     return;
   }
@@ -655,8 +655,7 @@ void setOBPixBlue() {
 int connectWifi() {
 
   WiFi.mode(WIFI_STA); //Optional
-  Serial.print("Connecting to SSID ");
-  Serial.print(config.ssid);
+  Serial.print("Connecting to SSID " + (String)config.ssid);
   //Serial.print(" with password ");
   //Serial.print(config.wifi_password);
   int count = 0;
@@ -669,6 +668,7 @@ int connectWifi() {
     if (count > 10) {
       Serial.print("Unable to connect to SSID ");
       Serial.println(config.ssid);
+      WiFi.disconnect();
       return 1;
     }    
   }
@@ -839,10 +839,12 @@ void checkAUX() {
       playUploadTone();
       Serial.print("Uploading config file ");
       Serial.print(config_filename);
-      Serial.print(" from SD card to FFat, restarting...");
+      Serial.print(" from SD card to FFat");
       delay(1000);
       configSDtoFFat();
       delay(1000);
+      Serial.println("Restarting...");
+      Serial.print("");
       ESP.restart();
     }
     //Serial.println(count);
@@ -949,30 +951,7 @@ void startMQTTConnection() {
   if (MQTTclient.connected()) {
     MQTTclient.publish(config.mqtt_stat_topic, "locked", true);
   }
-  lastMQTTReconnectAttempt = 0;
-}
-
-boolean mqttReconnect() {
-  if (strcmp(config.mqtt_auth, "true") == 0) {
-    if (MQTTclient.connect(config.mqtt_client_name, config.mqtt_user, config.mqtt_password)) {
-      Serial.print("Connected to MQTT broker ");
-      Serial.print(config.mqtt_server);
-      Serial.print(" as ");
-      Serial.println(config.mqtt_client_name);
-      MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
-      MQTTclient.subscribe(config.mqtt_cmnd_topic);
-    }
-  } else {
-    if (MQTTclient.connect(config.mqtt_client_name)) {
-      Serial.print("Connected to MQTT broker ");
-      Serial.print(config.mqtt_server);
-      Serial.print(" as ");
-      Serial.println(config.mqtt_client_name);
-      MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
-      MQTTclient.subscribe(config.mqtt_cmnd_topic);
-    }
-  }
-  return MQTTclient.connected();
+  lastMQTTConnectAttempt = 0;
 }
 
 void MQTTcallback(char* topic, byte* payload, unsigned int length) {
@@ -1024,14 +1003,45 @@ void MQTTcallback(char* topic, byte* payload, unsigned int length) {
 void maintainConnnectionMQTT() {
   if (!MQTTclient.connected()) {
     long now = millis();
-    if (now - lastMQTTReconnectAttempt > 5000) {
-      lastMQTTReconnectAttempt = now;
+    if (now - lastMQTTConnectAttempt > 60000) {
+      lastMQTTConnectAttempt = now;
       // Attempt to reconnect
-      if (mqttReconnect()) {
-        lastMQTTReconnectAttempt = 0;
-      }
+      mqttConnect();
     }
   }
+}
+
+boolean mqttConnect() {
+  if ((!strcmp(config.mqtt_enabled, "true") == 0 || (WiFi.status() != WL_CONNECTED))) {
+    return false;
+  }
+  Serial.print("Attempting connection to MQTT broker ");
+  Serial.print(config.mqtt_server);
+  Serial.println("... ");
+  if (strcmp(config.mqtt_auth, "true") == 0) {
+    if (MQTTclient.connect(config.mqtt_client_name, config.mqtt_user, config.mqtt_password)) {
+      Serial.print("Connected to MQTT broker ");
+      Serial.print(config.mqtt_server);
+      Serial.print(" as ");
+      Serial.println(config.mqtt_client_name);
+      MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
+      MQTTclient.subscribe(config.mqtt_cmnd_topic);
+      return MQTTclient.connected();
+    }
+  } else {
+    if (MQTTclient.connect(config.mqtt_client_name)) {
+      Serial.print("Connected to MQTT broker ");
+      Serial.print(config.mqtt_server);
+      Serial.print(" as ");
+      Serial.println(config.mqtt_client_name);
+      MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
+      MQTTclient.subscribe(config.mqtt_cmnd_topic);
+      return MQTTclient.connected();
+    }
+  }
+  Serial.print("Unable to connect to MQTT broker ");
+  Serial.println(config.mqtt_server);
+  return false;
 }
 
 void checkMqtt() {
@@ -1073,6 +1083,8 @@ void checkSerialCmd() {
       configSDtoFFat();
     } else if (serialCmd.equals("read_config")) {
       readFile(FFat, config_filename);
+    } else if (serialCmd.equals("show_version")) {
+      Serial.println(codeVersion);
     } else if (serialCmd.equals("restart")) {
       Serial.println("Restarting device...");
       ESP.restart();
@@ -1350,6 +1362,10 @@ void outputAddressingHTTP() {
   Serial.println("\n");
 }
 
+int parseSDAddressingFile () {
+  //TODO
+}
+
 void saveAddressingStaticHTTP() {
   //TODO
 }
@@ -1573,8 +1589,10 @@ void startWebServer() {
   webServer.on("/purgeAddressingStaticHTTP", purgeAddressingStaticHTTP);
   webServer.on("/", MainPage);
   webServer.begin();
-  Serial.print("Web Server started at http://");
-  Serial.println(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("Web Server started at http://");
+    Serial.println(WiFi.localIP());
+  }
 }
 
 // --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP --- SETUP ---
@@ -1639,6 +1657,9 @@ void setup() {
   if (forceOffline == false) {
     connectWifi();
     startWebServer();
+    if (strcmp(config.mqtt_enabled, "true") == 0) {
+      mqttConnect();
+    }
   }
     
   ob_pixel.begin(); //Setting onboard neopixel throws RMT errors for some reason
@@ -1667,11 +1688,14 @@ void loop() {
       }
       //Online Functions
       webServer.handleClient();
-      maintainConnnectionMQTT();
-      checkMqtt();
+      if (strcmp(config.mqtt_enabled, "true") == 0) {
+        maintainConnnectionMQTT();
+        checkMqtt();
+      }
       disconCount = 0;
     } else {
-      if (disconCount > 100000) {
+      //Future - trannsition to millis and use lastWifiConnectAttempt
+      if (disconCount > 1000) {
         disconCount = 0;
         Serial.println("WiFi reconnection attempt...");
          connectWifi();
