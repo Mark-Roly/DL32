@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 rev 20231220
-  Last updated 07/08/2024
+  Last updated 09/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240807
+#define codeVersion 20240809
 
 // Include Libraries
 #include <Arduino.h>
@@ -85,6 +85,7 @@ struct Config {
   char mqtt_cmnd_topic[32];
   char mqtt_stat_topic[32];
   char mqtt_keys_topic[32];
+  char mqtt_addr_topic[32];
   char mqtt_client_name[32];
   char mqtt_auth[8];
   char mqtt_user[32];
@@ -494,9 +495,11 @@ void loadFSJSON(const char* config_filename, Config& config) {
   strlcpy(config.mqtt_stat_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_stat_topic));
   strlcpy(config.mqtt_cmnd_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_cmnd_topic));
   strlcpy(config.mqtt_keys_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_keys_topic));
+  strlcpy(config.mqtt_addr_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_addr_topic));
   strcat(config.mqtt_stat_topic, "/stat");
   strcat(config.mqtt_cmnd_topic, "/cmnd");
   strcat(config.mqtt_keys_topic, "/keys");
+  strcat(config.mqtt_addr_topic, "/addr");
   
   strlcpy(config.mqtt_client_name, doc["mqtt_client_name"] | "DEFAULT_dl32s3", sizeof(config.mqtt_client_name));
   strlcpy(config.mqtt_auth, doc["mqtt_auth"] | "true", sizeof(config.mqtt_auth));
@@ -672,11 +675,8 @@ int connectWifi() {
       return 1;
     }    
   }
-
   Serial.print("\nConnected to SSID ");
   Serial.println(config.ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
   if (strcmp(config.mqtt_enabled, "true") == 0) {
     startMQTTConnection();
   }
@@ -726,7 +726,7 @@ void unlock(int secs) {
     digitalWrite(lockRelay_pin, HIGH);
   }
   if (MQTTclient.connected()) {
-    MQTTclient.publish(config.mqtt_stat_topic, "locked");
+    MQTTclient.publish(config.mqtt_stat_topic, "locked", true);
   }
 }
 
@@ -869,11 +869,17 @@ void checkMagSensor() {
     //send not that door has closed
     doorOpen = false;
     Serial.println("Door Closed");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "door_closed");
+    }
     //Serial.print("doorOpen == ");
     //Serial.println(doorOpen);
   } else if (doorOpen == false && digitalRead(magSensor_pin) == HIGH) {
     doorOpen = true;
     Serial.println("Door Opened");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "door_opened");
+    }
     //Serial.print("doorOpen == ");
     //Serial.println(doorOpen);
   }
@@ -1026,6 +1032,12 @@ boolean mqttConnect() {
       Serial.println(config.mqtt_client_name);
       MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
       MQTTclient.subscribe(config.mqtt_cmnd_topic);
+      char IP[] = "xxx.xxx.xxx.xxx";
+      IPAddress ip = WiFi.localIP();
+      ip.toString().toCharArray(IP, 16);
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+      MQTTclient.publish(config.mqtt_addr_topic, IP);  
       return MQTTclient.connected();
     }
   } else {
@@ -1036,6 +1048,12 @@ boolean mqttConnect() {
       Serial.println(config.mqtt_client_name);
       MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
       MQTTclient.subscribe(config.mqtt_cmnd_topic);
+      char IP[] = "xxx.xxx.xxx.xxx";
+      IPAddress ip = WiFi.localIP();
+      ip.toString().toCharArray(IP, 16);
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+      MQTTclient.publish(config.mqtt_addr_topic, IP); 
       return MQTTclient.connected();
     }
   }
@@ -1101,11 +1119,6 @@ void checkSerialCmd() {
 
 // --- Web Functions --- Web Functions --- Web Functions --- Web Functions --- Web Functions --- Web Functions ---
 
-void handleRoot() {
-  webServer.send(200, "text/plain", "hello from ESP32!");
-  Serial.print("Message arrived TOPIC:[");
-}
-
 void handleNotFound() {
   String message = "File Not Found\n\n";
   message += "URI: ";
@@ -1131,6 +1144,7 @@ void DownloadKeysHTTP() {
   } else {
     pageContent += F("<br/> <textarea readonly>Unable to download keys.txt</textarea>");
   }
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1150,6 +1164,7 @@ void DownloadConfigHTTP() {
     pageContent += F(config_filename);
     pageContent += F("</textarea>");
   }
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1165,6 +1180,7 @@ void OutputKeys() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Keys output to serial.</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1178,6 +1194,7 @@ void restartESPHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Restarting ESP...</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1198,6 +1215,7 @@ void DisplayKeys() {
     pageContent += F(buffer);
   }
   pageContent += F("</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1215,6 +1233,7 @@ void OutputConfig() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Config output to serial.</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1235,6 +1254,7 @@ void DisplayConfig() {
     pageContent += F(buffer);
   }
   pageContent += F("</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1245,6 +1265,7 @@ void MainPage() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly></textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1260,11 +1281,46 @@ void UnlockHTTP() {
   unlock(httpDur);
 }
 
+void garageToggleHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
+  Serial.println("Garage Door toggled HTTP");
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(config.mqtt_stat_topic, "Garage Door toggled HTTP");
+  }  
+  garage_toggle();
+}
+
+void garageOpenHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
+  if (doorOpen == false) {
+    Serial.println("Garage Door opened HTTP");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Garage Door opened HTTP");
+    }  
+    garage_open();
+  }
+}
+
+void garageCloseHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
+  if (doorOpen) {
+    Serial.println("Garage Door closed via HTTP");
+    if (MQTTclient.connected()) {
+      MQTTclient.publish(config.mqtt_stat_topic, "Garage Door closed via HTTP");
+    }
+    garage_close();
+  }
+}
+
 void configSDtoFFatHTTP() {
   configSDtoFFat();
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Copied configuration from SD to FFat</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1275,6 +1331,7 @@ void keysSDtoFFatHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Copied keys from SD to FFat</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1285,6 +1342,7 @@ void purgeKeysHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Keys Purged</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1301,6 +1359,7 @@ void purgeConfigHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Config Purged</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1323,7 +1382,7 @@ int FFat_file_download(String filename) {
 
 void RingBellHTTP() {
   ringBell();
-  webServer.sendHeader("Location", "/",true);  
+  webServer.sendHeader("Location", "/",true);
   webServer.send(302, "text/plain", "");
 }
 
@@ -1340,6 +1399,7 @@ void displayAddressingHTTP() {
   pageContent += F("Default Gateway: ");
   //pageContent += F(String(WiFi.gatewayIP()));
   pageContent += F("</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1356,6 +1416,7 @@ void outputAddressingHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Addressing output to serial.</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1379,6 +1440,7 @@ void downloadAddressingStaticHTTP() {
   } else {
     pageContent += F("<br/> <textarea readonly>Unable to download addressing file</textarea>");
   }
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1389,6 +1451,7 @@ void addressingStaticSDtoFFatHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Copied static addressing from SD to FFat</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1399,6 +1462,7 @@ void purgeAddressingStaticHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>static addressing purged</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1410,6 +1474,7 @@ void OutputFSHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>FS files output to serial.</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1420,6 +1485,7 @@ void DisplayFSHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>WIP</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1431,6 +1497,7 @@ void OutputSDFSHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>SD files output to serial.</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1441,6 +1508,7 @@ void DisplaySDFSHTTP() {
   SendHTML_Header();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>WIP</textarea>");
+  siteModes();
   siteFooter();
   SendHTML_Content();
   SendHTML_Stop();
@@ -1488,11 +1556,43 @@ void siteHeader() {
   pageContent += F("</style>");
   pageContent += F("</head>");
   pageContent += F("<body><div><h1>DL32 MENU</h1>");
+  pageContent += F("<h3>");
+  pageContent += F(config.mqtt_client_name);
+  pageContent += F("</h3>");
+}
+
+void siteModes() {
+  pageContent += F("<br/>");
+  pageContent += F("<a class='smalltext'>");
+  if (forceOffline) {
+    pageContent += F(" Forced Offline Mode /");
+  }
+  if (failSecure == false) {
+    pageContent += F(" Failsafe Mode /");
+  }
+  if (digitalRead(DS03) == LOW) {
+    pageContent += F(" Silent Mode /");
+  }
+  if (garage_mode) {
+    pageContent += F(" Garage Mode /");
+  }
+  pageContent += F("</a>");
 }
 
 void siteButtons() {
   pageContent += F("<a class='header'>Device Control</a>");
-  pageContent += F("<a href='/UnlockHTTP'><button>Unlock</button></a>");
+  if (garage_mode) {
+    pageContent += F("<a href='/garageToggleHTTP'><button>Toggle</button></a>");
+    pageContent += F("<br/>");
+    if (doorOpen == false) {
+      pageContent += F("<a href='/garageOpenHTTP'><button>Open</button></a>");
+    }
+    if (doorOpen) {
+      pageContent += F("<a href='/garageCloseHTTP'><button>Close</button></a>");
+    }
+  } else {
+    pageContent += F("<a href='/UnlockHTTP'><button>Unlock</button></a>");
+  }
   pageContent += F("<br/>");
   pageContent += F("<a href='/RingBellHTTP'><button>Ring Bell</button></a>");
   pageContent += F("<br/>");
@@ -1567,6 +1667,9 @@ void startWebServer() {
   webServer.on("/DisplayKeys", DisplayKeys);
   webServer.on("/OutputKeys", OutputKeys);
   webServer.on("/UnlockHTTP", UnlockHTTP);
+  webServer.on("/garageToggleHTTP", garageToggleHTTP);
+  webServer.on("/garageOpenHTTP", garageOpenHTTP);
+  webServer.on("/garageCloseHTTP", garageCloseHTTP);
   webServer.on("/RingBellHTTP", RingBellHTTP);
   webServer.on("/DownloadConfigHTTP", DownloadConfigHTTP);
   webServer.on("/addKeyModeHTTP", addKeyModeHTTP);
