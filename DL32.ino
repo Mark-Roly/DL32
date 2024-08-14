@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 rev 20231220
-  Last updated 09/08/2024
+  Last updated 14/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240809
+#define codeVersion 20240814
 
 // Include Libraries
 #include <Arduino.h>
@@ -44,9 +44,10 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Ticker.h>
-#include "FFat.h"
-#include "FS.h"
-#include "SD.h"
+#include <Regexp.h>
+#include <FFat.h>
+#include <FS.h>
+#include <SD.h>
 
 // 3.0 Pins - Uncomment if using S3 Wemos board revision
 #define buzzer_pin 14
@@ -202,6 +203,14 @@ boolean keyAuthorized(String key) {
   return false;
 }
 
+void writeKey(String key) {
+  appendlnFile(FFat, keys_filename, key.c_str());
+  add_mode = false;
+  Serial.print("Added key ");
+  Serial.print(scannedKey);
+  Serial.println(" to authorized list");
+}
+
 // Polled function to check if a key has been recently read
 void checkKey() {
   noInterrupts();
@@ -247,12 +256,9 @@ void checkKey() {
   } 
 
   bool match_found = keyAuthorized(scannedKey);
+
   if ((match_found == false) and (add_mode)) {
-    appendlnFile(FFat, keys_filename, scannedKey.c_str());
-    add_mode = false;
-    Serial.print("Added key ");
-    Serial.print(scannedKey);
-    Serial.println(" to authorized list");
+    writeKey(scannedKey);
   } else if (match_found and (add_mode)) {
     add_mode = false;
     Serial.print("Key ");
@@ -508,7 +514,7 @@ void loadFSJSON(const char* config_filename, Config& config) {
   file.close();
 }
 
-void configSDtoFFat() {
+boolean configSDtoFFat() {
   if ((SD_present == true) && (SD.exists(config_filename))) {
     File sourceFile = SD.open(config_filename);
     File destFile = FFat.open(config_filename, FILE_WRITE);
@@ -519,13 +525,16 @@ void configSDtoFFat() {
     destFile.close();
     sourceFile.close();
   } else {
-    Serial.println("");
     playUnauthorizedTone();
     Serial.println("No SD Card Mounted or no such file");
-    return;
+    return false;
   }
+  playSuccessTone();
   Serial.println("Config file successfuly copied from SD to FFat");
+  Serial.println("Restarting...");
+  Serial.print("");
   ESP.restart();
+  return true;
 }
 
 void addressingSDtoFS() {
@@ -595,6 +604,16 @@ int addKeyMode() {
     noInterrupts();
     wiegand.flush();
     interrupts();
+
+    if (Serial.available()) {
+      serialCmd = Serial.readStringUntil('\n');
+      serialCmd.trim();
+      Serial.print("Serial key input: ");
+      Serial.println(serialCmd);
+      scannedKey = serialCmd;
+      writeKey(scannedKey);
+    }
+  
     delay(10);
     add_count++;
   }
@@ -602,6 +621,7 @@ int addKeyMode() {
     add_mode = false;
     Serial.println("No new key added");
   }
+  scannedKey = "";
   setPixBlue();
   return 1;
 }
@@ -839,15 +859,12 @@ void checkAUX() {
       playUploadTone();
       Serial.print("Uploading config file ");
       Serial.print(config_filename);
-      Serial.print(" from SD card to FFat");
+      Serial.println(" from SD card to FFat");
       delay(1000);
       configSDtoFFat();
       delay(1000);
-      Serial.println("Restarting...");
-      Serial.print("");
-      ESP.restart();
     }
-    //Serial.println(count);
+    setPixBlue();
     return;
   }
 }
@@ -927,6 +944,20 @@ void playUploadTone() {
       ledcWriteTone(buzzer_pin, 0);
       delay(80);
     }
+  }
+}
+
+void playSuccessTone() {
+  if (digitalRead(DS03) == HIGH) {
+    ledcWriteTone(buzzer_pin, 2000);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 4000);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 6000);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 8000);
+    delay(80);
+    ledcWriteTone(buzzer_pin, 0);
   }
 }
 
@@ -1190,14 +1221,10 @@ void OutputKeys() {
 
 // Output a list of allowed keys to serial
 void restartESPHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
+  Serial.println("Garage Door toggled HTTP");
   Serial.println("Restarting ESP...");
-  SendHTML_Header();
-  siteButtons();
-  pageContent += F("<br/> <textarea readonly>Restarting ESP...</textarea>");
-  siteModes();
-  siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
   Serial.println("\n");
   ESP.restart();
 }
@@ -1798,7 +1825,7 @@ void loop() {
       disconCount = 0;
     } else {
       //Future - trannsition to millis and use lastWifiConnectAttempt
-      if (disconCount > 1000) {
+      if (disconCount > 10000) {
         disconCount = 0;
         Serial.println("WiFi reconnection attempt...");
          connectWifi();
