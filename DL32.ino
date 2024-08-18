@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 rev 20231220
-  Last updated 14/08/2024
+  Last updated 18/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240814
+#define codeVersion 20240818
 
 // Include Libraries
 #include <Arduino.h>
@@ -44,7 +44,7 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Ticker.h>
-#include <Regexp.h>
+#include <uri/UriRegex.h>
 #include <FFat.h>
 #include <FS.h>
 #include <SD.h>
@@ -98,7 +98,6 @@ struct Config {
 #define httpDur 5
 #define keypadDur 15 //tenths-of-seconds
 #define keyDur 5
-#define mqttDur 10
 #define garageDur 500
 #define addKeyDur 10
 #define unrecognizedKeyDur 5
@@ -215,17 +214,17 @@ void writeKey(String key) {
 void checkKey() {
   noInterrupts();
   wiegand.flush();
+  interrupts();
   String keypadBuffer;
   int keypadCounter = 0;
-  interrupts();
   if (scannedKey == "") {
     return;
-  } else if ((scannedKey.substring(1)) == "A") {
+  //Othwerwise if the key pressed is 0A (Asterisk), then ring the bell and finish
+  } else if (((scannedKey.substring(0)) == "0")&&((scannedKey.substring(1)) == "A")) {
     ringBell();
     scannedKey = "";
     return;
   }
-  
   //function to recognize keypad input
   if ((scannedKey.length()) == 2) {
     Serial.print("Keypad entry: ");
@@ -237,9 +236,11 @@ void checkKey() {
       interrupts();
       delay(100);
       keypadCounter++;
+      //If the input was a keypad digit, then reset the inter-key timeout and wait for another one
       if ((scannedKey.length()) == 2) {
         keypadCounter = 0;
-        if ((scannedKey.substring(1)) == "B") {
+        //If the key pressed is 0B (Hash), then exit the loop kof waiting for input
+        if (((scannedKey.substring(0)) == "0")&&((scannedKey.substring(1)) == "B")) {
           keypadCounter = keypadDur;
         } else {
           keypadBuffer += scannedKey.substring(1);
@@ -594,7 +595,7 @@ void keysFStoSD() {
   ESP.restart();
 }
 
-int addKeyMode() {
+void addKeyMode() {
   playAddModeTone();
   setPixPurple();
   Serial.println("Add Key mode - Waiting for key");
@@ -620,10 +621,12 @@ int addKeyMode() {
   if (scannedKey == "") {
     add_mode = false;
     Serial.println("No new key added");
+  } else {
+    Serial.print("scannedKey: ");
+    Serial.println(scannedKey);
   }
-  scannedKey = "";
   setPixBlue();
-  return 1;
+  return;
 }
 
 // --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions ---
@@ -703,7 +706,7 @@ int connectWifi() {
   return 0;
 }
 
-// --- Command Functions --- Command Functions --- Command Functions --- Command Functions --- Command Functions --- Command Functions ---
+// --- Action Functions --- Action Functions --- Action Functions --- Action Functions --- Action Functions --- Action Functions ---
 
 void unlock(int secs) {
   int loops = 0;
@@ -711,7 +714,7 @@ void unlock(int secs) {
   if (garage_mode) {
     Serial.println("Toggle garage door");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Toggle garage door");
+      mqttPublish(config.mqtt_stat_topic, "Toggle garage door");
     }
     setPixGreen();
     digitalWrite(lockRelay_pin, HIGH);
@@ -732,7 +735,7 @@ void unlock(int secs) {
   Serial.println(" Seconds");
   setPixGreen();
   if (MQTTclient.connected()) {
-    MQTTclient.publish(config.mqtt_stat_topic, "unlocked");
+    mqttPublish(config.mqtt_stat_topic, "unlocked");
   }
   while (loops < secs) {
     loops++;
@@ -754,7 +757,7 @@ void garage_toggle() {
   if (garage_mode) {
     Serial.println("Toggle garage door");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Toggle garage door");
+      mqttPublish(config.mqtt_stat_topic, "Toggle garage door");
     }
     setPixGreen();
     digitalWrite(lockRelay_pin, HIGH);
@@ -770,7 +773,7 @@ void garage_open() {
   if (garage_mode && (doorOpen == false)) {
     Serial.println("Opening garage door");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Opening garage door");
+      mqttPublish(config.mqtt_stat_topic, "Opening garage door");
     }
     setPixGreen();
     digitalWrite(lockRelay_pin, HIGH);
@@ -781,12 +784,12 @@ void garage_open() {
   } else if  (garage_mode && (doorOpen)) {
     Serial.println("Door is already open!");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Door is already open!");
+      mqttPublish(config.mqtt_stat_topic, "Door is already open!");
     }
   } else if (garage_mode == false) {
     Serial.println("Unit is not in garage mode.");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Unit is not in garage mode.");
+      mqttPublish(config.mqtt_stat_topic, "Unit is not in garage mode.");
     }
   }
   return;
@@ -796,7 +799,7 @@ void garage_close() {
   if ((garage_mode) && (doorOpen)) {
     Serial.println("Closing garage door");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Closing garage door");
+      mqttPublish(config.mqtt_stat_topic, "Closing garage door");
     }
     setPixGreen();
     digitalWrite(lockRelay_pin, HIGH);
@@ -807,12 +810,12 @@ void garage_close() {
   } else if  (garage_mode && (doorOpen == false)) {
     Serial.println("Door is already closed!");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Door is already closed!");
+      mqttPublish(config.mqtt_stat_topic, "Door is already closed!");
     }
   } else if (garage_mode == false) {
     Serial.println("Unit is not in garage mode.");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Unit is not in garage mode.");
+      mqttPublish(config.mqtt_stat_topic, "Unit is not in garage mode.");
     }
   }
   return;
@@ -834,7 +837,7 @@ int checkExit() {
     if (count > 5 && count < 501){
       Serial.println("Exit Button Pressed");
       if (MQTTclient.connected()) {
-        MQTTclient.publish(config.mqtt_stat_topic, "button pressed");
+        mqttPublish(config.mqtt_stat_topic, "button pressed");
       }
       unlock(exitButDur);
       return 0;
@@ -848,7 +851,7 @@ void checkAUX() {
     long count = 0;
     Serial.println("AUX Button Pressed");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "AUX button pressed");
+      mqttPublish(config.mqtt_stat_topic, "AUX button pressed");
     }
     while (digitalRead(AUXButton_pin) == LOW && (count < 500)) {
       count++;
@@ -874,7 +877,7 @@ void checkBell() {
     Serial.println("");
     Serial.print("Bell Pressed - ");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "bell pressed");
+      mqttPublish(config.mqtt_stat_topic, "bell pressed");
     }
     ringBell();
   }
@@ -887,7 +890,7 @@ void checkMagSensor() {
     doorOpen = false;
     Serial.println("Door Closed");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "door_closed");
+      mqttPublish(config.mqtt_stat_topic, "door_closed");
     }
     //Serial.print("doorOpen == ");
     //Serial.println(doorOpen);
@@ -895,7 +898,7 @@ void checkMagSensor() {
     doorOpen = true;
     Serial.println("Door Opened");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "door_opened");
+      mqttPublish(config.mqtt_stat_topic, "door_opened");
     }
     //Serial.print("doorOpen == ");
     //Serial.println(doorOpen);
@@ -992,7 +995,7 @@ void startMQTTConnection() {
 }
 
 void MQTTcallback(char* topic, byte* payload, unsigned int length) {
-  Serial.println("");
+  payload[length] = '\0';
   Serial.print("Message arrived TOPIC:[");
   Serial.print(topic);
   Serial.print("] PAYLOAD:");
@@ -1000,41 +1003,8 @@ void MQTTcallback(char* topic, byte* payload, unsigned int length) {
     Serial.print((char)payload[i]);
   }
   Serial.println();
-
-  // Unlock if payload is "unlock"
-  if (!strncmp((char *)payload, "unlock", 6)) {
-    Serial.println("Unlocked via MQTT");
-    MQTTclient.publish(config.mqtt_stat_topic, "lock opened via MQTT");
-    unlock(mqttDur);
-  } else if ((!strncmp((char *)payload, "garage_toggle", 13)) && garage_mode) {
-    Serial.println("Toggling garage door");
-    MQTTclient.publish(config.mqtt_stat_topic, "Toggling garage door");
-    garage_toggle();
-  } else if ((!strncmp((char *)payload, "garage_open", 11)) && garage_mode) {
-    Serial.println("Open garage door...");
-    MQTTclient.publish(config.mqtt_stat_topic, "Open garage door..");
-    garage_open();
-  } else if ((!strncmp((char *)payload, "garage_close", 12)) && garage_mode) {
-    Serial.println("Close garage door...");
-    MQTTclient.publish(config.mqtt_stat_topic, "Close garage door...");
-    garage_close();
-  } else if (!strncmp((char *)payload, "bell", 4)) {
-    Serial.println("Bell via MQTT");
-    MQTTclient.publish(config.mqtt_stat_topic, "Bell rung via MQTT");
-    ringBell();
-  } else if (!strncmp((char *)payload, "add_key_mode", 12)) {
-    Serial.println("add key mode via MQTT");
-    MQTTclient.publish(config.mqtt_stat_topic, "Add key mode via MQTT");
-    addKeyMode();
-  } else if (!strncmp((char *)payload, "restart", 7)) {
-    Serial.println("Restart via MQTT");
-    MQTTclient.publish(config.mqtt_stat_topic, "Restart via MQTT");
-    Serial.println("Restarting device...");
-    ESP.restart();
-  } else {
-    Serial.println("");
-    Serial.print("Message not recognized: ");
-  }
+  executeCommand((char *)payload);
+  return;
 }
 
 void maintainConnnectionMQTT() {
@@ -1061,14 +1031,14 @@ boolean mqttConnect() {
       Serial.print(config.mqtt_server);
       Serial.print(" as ");
       Serial.println(config.mqtt_client_name);
-      MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
+      mqttPublish(config.mqtt_stat_topic, "Connected to MQTT Broker");
       MQTTclient.subscribe(config.mqtt_cmnd_topic);
       char IP[] = "xxx.xxx.xxx.xxx";
       IPAddress ip = WiFi.localIP();
       ip.toString().toCharArray(IP, 16);
-      Serial.print("IP address: ");
-      Serial.println(WiFi.localIP());
-      MQTTclient.publish(config.mqtt_addr_topic, IP);  
+      Serial.print("Publishing IP address to topic: ");
+      Serial.println(config.mqtt_addr_topic);
+      mqttPublish(config.mqtt_addr_topic, IP);
       return MQTTclient.connected();
     }
   } else {
@@ -1077,14 +1047,14 @@ boolean mqttConnect() {
       Serial.print(config.mqtt_server);
       Serial.print(" as ");
       Serial.println(config.mqtt_client_name);
-      MQTTclient.publish(config.mqtt_stat_topic, "Connected to MQTT Broker");
+      mqttPublish(config.mqtt_stat_topic, "Connected to MQTT Broker");
       MQTTclient.subscribe(config.mqtt_cmnd_topic);
       char IP[] = "xxx.xxx.xxx.xxx";
       IPAddress ip = WiFi.localIP();
       ip.toString().toCharArray(IP, 16);
-      Serial.print("IP address: ");
-      Serial.println(WiFi.localIP());
-      MQTTclient.publish(config.mqtt_addr_topic, IP); 
+      Serial.print("Publishing IP address to topic: ");
+      Serial.println(config.mqtt_addr_topic);
+      mqttPublish(config.mqtt_addr_topic, IP); 
       return MQTTclient.connected();
     }
   }
@@ -1104,7 +1074,16 @@ void checkMqtt() {
   }
 }
 
-// --- Serial Functions --- Serial Functions --- Serial Functions --- Serial Functions --- Serial Functions ---
+boolean mqttPublish(char* topic, char* payload) {
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(topic, payload);
+    return true;
+  } else {
+    return false;
+  }
+}
+
+// --- Serial Commands --- Serial Commands --- Serial Commands --- Serial Commands --- Serial Commands ---
 
 void checkSerialCmd() {
   if (Serial.available()) {
@@ -1112,40 +1091,60 @@ void checkSerialCmd() {
     serialCmd.trim();
     Serial.print("Command: ");
     Serial.println(serialCmd);
-    if (serialCmd.equals("list_ffat")) {
-      listDir(FFat, "/", 0);
-    } else if (serialCmd.equals("list_sd")) {
-      listDir(SD, "/", 0);
-    } else if (serialCmd.equals("list_keys")) {
-      OutputKeys();
-    } else if (serialCmd.equals("purge_keys")) {
-      deleteFile(FFat, keys_filename);
-    } else if (serialCmd.equals("purge_config")) {
-      deleteFile(FFat, config_filename);
-    } else if (serialCmd.equals("add_key_mode")) {
-      addKeyMode();
-    } else if (serialCmd.equals("ring_bell")) {
-      ringBell();
-    } else if (serialCmd.equals("copy_keys_sd_to_ffat")) {
-      keysSDtoFFat();
-    } else if (serialCmd.equals("copy_config_sd_to_ffat")) {
-      configSDtoFFat();
-    } else if (serialCmd.equals("read_config")) {
-      readFile(FFat, config_filename);
-    } else if (serialCmd.equals("show_version")) {
-      Serial.println(codeVersion);
-    } else if (serialCmd.equals("restart")) {
-      Serial.println("Restarting device...");
-      ESP.restart();
-    } else if (serialCmd.equals("reboot")) {
-      Serial.println("Restarting device...");
-      ESP.restart();
-    } else if (serialCmd.equals("unlock")) {
-      unlock(5);
-    } else {
-      Serial.println("bad command");
-    }
+    executeCommand(serialCmd);
   }
+}
+
+boolean executeCommand(String command) {
+  Serial.print("command entered: ");
+  Serial.println(command);
+  if (command.equals("list_ffat")) {
+      listDir(FFat, "/", 0);
+  } else if (command.equals("list_sd")) {
+    listDir(SD, "/", 0);
+  } else if (command.equals("list_keys")) {
+    outputKeys();
+  } else if (command.equals("purge_keys")) {
+    deleteFile(FFat, keys_filename);
+  } else if (command.equals("purge_config")) {
+    deleteFile(FFat, config_filename);
+  } else if (command.equals("add_key_mode")) {
+    addKeyMode();
+  } else if (command.equals("ring_bell")) {
+    ringBell();
+  } else if (command.equals("copy_keys_sd_to_ffat")) {
+    keysSDtoFFat();
+  } else if (command.equals("copy_config_sd_to_ffat")) {
+    configSDtoFFat();
+  } else if (command.equals("read_config")) {
+    readFile(FFat, config_filename);
+  } else if (command.equals("show_version")) {
+    Serial.println(codeVersion);
+  } else if (command.equals("restart")) {
+    Serial.println("Restarting device...");
+    ESP.restart();
+  } else if (command.equals("reboot")) {
+    Serial.println("Restarting device...");
+    ESP.restart();
+  } else if (command.equals("unlock")) {
+    unlock(5);
+  } else if ((command.equals("garage_toggle")&& garage_mode)) {
+    Serial.println("Toggling garage door");
+    mqttPublish(config.mqtt_stat_topic, "Toggling garage door");
+    garage_toggle();
+  } else if ((command.equals("garage_open")&& garage_mode)) {
+    Serial.println("Toggling garage door");
+    mqttPublish(config.mqtt_stat_topic, "Opening garage door");
+    garage_open();
+  } else if ((command.equals("garage_close")&& garage_mode)) {
+    Serial.println("Closing garage door");
+    mqttPublish(config.mqtt_stat_topic, "Closing garage door");
+    garage_close();
+  } else {
+    Serial.println("bad command");
+    return false;
+  }
+  return true;
 }
 
 // --- Web Functions --- Web Functions --- Web Functions --- Web Functions --- Web Functions --- Web Functions ---
@@ -1166,25 +1165,25 @@ void handleNotFound() {
 }
 
 // Download list of allowed keys (keys.txt)
-void DownloadKeysHTTP() {
+void downloadKeysHTTP() {
   int result = FFat_file_download(keys_filename);
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   if (result == 0) {
-    pageContent += F("<br/> <textarea readonly>Downloading keys.txt</textarea>");
+    pageContent += F("<br/> <textarea readonly>Downloading keys file</textarea>");
   } else {
-    pageContent += F("<br/> <textarea readonly>Unable to download keys.txt</textarea>");
+    pageContent += F("<br/> <textarea readonly>Unable to download keys file</textarea>");
   }
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 // Download copy of config file (config.json)
-void DownloadConfigHTTP() {
+void downloadConfigHTTP() {
   int result = FFat_file_download(config_filename);
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   if (result == 0) {
     pageContent += F("<br/> <textarea readonly>Downloading ");
@@ -1197,24 +1196,25 @@ void DownloadConfigHTTP() {
   }
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 // Output a list of allowed keys to serial
-void OutputKeys() {
-  Serial.println("Reading file: keys.txt");
+void outputKeys() {
+  Serial.print("Reading file: ");
+  Serial.println(keys_filename);
   File outFile = FFat.open(keys_filename);
   while (outFile.available()) {
     Serial.write(outFile.read());
   }
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Keys output to serial.</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
   outFile.close();
   Serial.println("\n");
 }
@@ -1230,8 +1230,8 @@ void restartESPHTTP() {
 }
 
 // Display allowed keys in webUI
-void DisplayKeys() {
-  SendHTML_Header();
+void displayKeys() {
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>");
   char buffer[64];
@@ -1244,33 +1244,33 @@ void DisplayKeys() {
   pageContent += F("</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
   dispFile.close();
 }
 
 // Output config to serial
-void OutputConfig() {
+void outputConfig() {
   Serial.print("Reading file: ");
   Serial.println(config_filename);
   File outFile = FFat.open(config_filename);
   while (outFile.available()) {
     Serial.write(outFile.read());
   }
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Config output to serial.</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
   outFile.close();
   Serial.println("\n");
 }
 
 // Display config in webUI
-void DisplayConfig() {
-  SendHTML_Header();
+void displayConfig() {
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>");
   char buffer[64];
@@ -1283,27 +1283,27 @@ void DisplayConfig() {
   pageContent += F("</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
   dispFile.close();
 }
 
 void MainPage() {
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly></textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
-void UnlockHTTP() {
+void unlockHTTP() {
   webServer.sendHeader("Location", "/",true);  
   webServer.send(302, "text/plain", "");
   Serial.println("Unlocked via HTTP");
   if (MQTTclient.connected()) {
-    MQTTclient.publish(config.mqtt_stat_topic, "HTTP Unlock");
+    mqttPublish(config.mqtt_stat_topic, "HTTP Unlock");
   }  
   unlock(httpDur);
 }
@@ -1313,7 +1313,7 @@ void garageToggleHTTP() {
   webServer.send(302, "text/plain", "");
   Serial.println("Garage Door toggled HTTP");
   if (MQTTclient.connected()) {
-    MQTTclient.publish(config.mqtt_stat_topic, "Garage Door toggled HTTP");
+    mqttPublish(config.mqtt_stat_topic, "Garage Door toggled HTTP");
   }  
   garage_toggle();
 }
@@ -1324,7 +1324,7 @@ void garageOpenHTTP() {
   if (doorOpen == false) {
     Serial.println("Garage Door opened HTTP");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Garage Door opened HTTP");
+      mqttPublish(config.mqtt_stat_topic, "Garage Door opened HTTP");
     }  
     garage_open();
   }
@@ -1336,7 +1336,7 @@ void garageCloseHTTP() {
   if (doorOpen) {
     Serial.println("Garage Door closed via HTTP");
     if (MQTTclient.connected()) {
-      MQTTclient.publish(config.mqtt_stat_topic, "Garage Door closed via HTTP");
+      mqttPublish(config.mqtt_stat_topic, "Garage Door closed via HTTP");
     }
     garage_close();
   }
@@ -1344,35 +1344,30 @@ void garageCloseHTTP() {
 
 void configSDtoFFatHTTP() {
   configSDtoFFat();
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Copied configuration from SD to FFat</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 void keysSDtoFFatHTTP() {
   keysSDtoFFat();
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Copied keys from SD to FFat</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 void purgeKeysHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
   deleteFile(FFat, keys_filename);
-  SendHTML_Header();
-  siteButtons();
-  pageContent += F("<br/> <textarea readonly>Keys Purged</textarea>");
-  siteModes();
-  siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
 }
 
 void addKeyModeHTTP() {
@@ -1382,14 +1377,9 @@ void addKeyModeHTTP() {
 }
 
 void purgeConfigHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
   deleteFile(FFat, config_filename);
-  SendHTML_Header();
-  siteButtons();
-  pageContent += F("<br/> <textarea readonly>Config Purged</textarea>");
-  siteModes();
-  siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
 }
 
 int FFat_file_download(String filename) {
@@ -1407,14 +1397,14 @@ int FFat_file_download(String filename) {
   return 1;
 }
 
-void RingBellHTTP() {
+void ringBellHTTP() {
   ringBell();
   webServer.sendHeader("Location", "/",true);
   webServer.send(302, "text/plain", "");
 }
 
 void displayAddressingHTTP() {
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>");
   pageContent += F("IP Address: ");
@@ -1428,8 +1418,8 @@ void displayAddressingHTTP() {
   pageContent += F("</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 void outputAddressingHTTP() {
@@ -1440,13 +1430,13 @@ void outputAddressingHTTP() {
   Serial.println(WiFi.subnetMask());
   Serial.print("Defalt Gateway: ");
   Serial.println(WiFi.gatewayIP());
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Addressing output to serial.</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
   Serial.println("\n");
 }
 
@@ -1460,7 +1450,7 @@ void saveAddressingStaticHTTP() {
 
 void downloadAddressingStaticHTTP() {
   int result = FFat_file_download(addressing_filename);
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   if (result == 0) {
     pageContent += F("<br/> <textarea readonly>Downloading addressing file</textarea>");
@@ -1469,79 +1459,79 @@ void downloadAddressingStaticHTTP() {
   }
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 void addressingStaticSDtoFFatHTTP() {
   //addressingSDtoFFat();
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>Copied static addressing from SD to FFat</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 void purgeAddressingStaticHTTP() {
   deleteFile(FFat, addressing_filename);
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>static addressing purged</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 // Output a list of FS files to serial
-void OutputFSHTTP() {
+void outputFSHTTP() {
   listDir(FFat, "/", 0);
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>FS files output to serial.</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 // Display a list of FS files in webpage
-void DisplayFSHTTP() {
-  SendHTML_Header();
+void displayFSHTTP() {
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>WIP</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 // Output a list of SD files to serial
-void OutputSDFSHTTP() {
+void outputSDFSHTTP() {
   listDir(SD, "/", 0);
-  SendHTML_Header();
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>SD files output to serial.</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
 // Display a list of SD files in webpage
-void DisplaySDFSHTTP() {
-  SendHTML_Header();
+void displaySDFSHTTP() {
+  sendHTMLHeader();
   siteButtons();
   pageContent += F("<br/> <textarea readonly>WIP</textarea>");
   siteModes();
   siteFooter();
-  SendHTML_Content();
-  SendHTML_Stop();
+  sendHTMLContent();
+  sendHTMLStop();
 }
 
-void SendHTML_Header() {
+void sendHTMLHeader() {
   webServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   webServer.sendHeader("Pragma", "no-cache");
   webServer.sendHeader("Expires", "-1");
@@ -1552,12 +1542,12 @@ void SendHTML_Header() {
   pageContent = "";
 }
 
-void SendHTML_Content() {
+void sendHTMLContent() {
   webServer.sendContent(pageContent);
   pageContent = "";
 }
 
-void SendHTML_Stop() {
+void sendHTMLStop() {
   webServer.sendContent("");
   webServer.client().stop();
 }
@@ -1618,19 +1608,19 @@ void siteButtons() {
       pageContent += F("<a href='/garageCloseHTTP'><button>Close</button></a>");
     }
   } else {
-    pageContent += F("<a href='/UnlockHTTP'><button>Unlock</button></a>");
+    pageContent += F("<a href='/unlockHTTP'><button>Unlock</button></a>");
   }
   pageContent += F("<br/>");
-  pageContent += F("<a href='/RingBellHTTP'><button>Ring Bell</button></a>");
+  pageContent += F("<a href='/ringBellHTTP'><button>Ring Bell</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/restartESPHTTP'><button>Restart DL32</button></a>");
   pageContent += F("<br/> <br/>");
   pageContent += F("<a class='header'>Key Management</a>");
-  pageContent += F("<a href='/DownloadKeysHTTP'><button>Download key file</button></a>");
+  pageContent += F("<a href='/downloadKeysHTTP'><button>Download key file</button></a>");
   pageContent += F("<br/>");
-  //pageContent += F("<a href='/OutputKeys'><button>Output keys to Serial</button></a>");
+  //pageContent += F("<a href='/outputKeys'><button>Output keys to Serial</button></a>");
   //pageContent += F("<br/>");
-  pageContent += F("<a href='/DisplayKeys'><button>Display keys in page</button></a>");
+  pageContent += F("<a href='/displayKeys'><button>Display keys in page</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/keysSDtoFFatHTTP'><button>Upload keys SD to DL32</button></a>");
   pageContent += F("<br/>");
@@ -1639,24 +1629,24 @@ void siteButtons() {
   pageContent += F("<a href='/purgeKeysHTTP'><button>Purge stored keys</button></a>");
   pageContent += F("<br/> <br/>");
   pageContent += F("<a class='header'>Config File</a>");
-  pageContent += F("<a href='/DownloadConfigHTTP'><button>Download config file</button></a>");
+  pageContent += F("<a href='/downloadConfigHTTP'><button>Download config file</button></a>");
   pageContent += F("<br/>");
-  //pageContent += F("<a href='/OutputConfig'><button>Output config to Serial</button></a>");
+  //pageContent += F("<a href='/outputConfig'><button>Output config to Serial</button></a>");
   //pageContent += F("<br/>");
-  pageContent += F("<a href='/DisplayConfig'><button>Display config in page</button></a>");
+  pageContent += F("<a href='/displayConfig'><button>Display config in page</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/configSDtoFFatHTTP'><button>Upload config SD to DL32</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeConfigHTTP'><button>Purge configuration</button></a>");
   pageContent += F("<br/>");
   //pageContent += F("<a class='header'>Filesystem Operations</a>");
-  //pageContent += F("<a href='/OutputFSHTTP'><button>Output FFat Contents to Serial</button></a>");
+  //pageContent += F("<a href='/outputFSHTTP'><button>Output FFat Contents to Serial</button></a>");
   //pageContent += F("<br/>");
-  //pageContent += F("<a href='/DisplayFSHTTP'><button style='background-color: #999999; color: #777777';>Display FFat contents in page</button></a>");
+  //pageContent += F("<a href='/displayFSHTTP'><button style='background-color: #999999; color: #777777';>Display FFat contents in page</button></a>");
   //pageContent += F("<br/>");
-  //pageContent += F("<a href='/OutputSDFSHTTP'><button>Output SD FS Contents to Serial</button></a>");
+  //pageContent += F("<a href='/outputSDFSHTTP'><button>Output SD FS Contents to Serial</button></a>");
   //pageContent += F("<br/>");
-  //pageContent += F("<a href='/DisplaySDFSHTTP'><button style='background-color: #999999; color: #777777';>Display SD FS contents in page</button></a>");
+  //pageContent += F("<a href='/displaySDFSHTTP'><button style='background-color: #999999; color: #777777';>Display SD FS contents in page</button></a>");
   //pageContent += F("<br/>");
   //pageContent += F("<a class='header'>IP Addressing</a>");
   //pageContent += F("<a href='/displayAddressingHTTP'><button style='background-color: #999999; color: #777777';>Show IP addressing</button></a>");
@@ -1689,24 +1679,28 @@ void siteFooter() {
   pageContent += F("</body></html>");
 }
 
+void FunctionX() {
+  webServer.send(200, "text//plain", webServer.uri() );
+}
+
 void startWebServer() {
-  webServer.on("/DownloadKeysHTTP", DownloadKeysHTTP);
-  webServer.on("/DisplayKeys", DisplayKeys);
-  webServer.on("/OutputKeys", OutputKeys);
-  webServer.on("/UnlockHTTP", UnlockHTTP);
+  webServer.on("/downloadKeysHTTP", downloadKeysHTTP);
+  webServer.on("/displayKeys", displayKeys);
+  webServer.on("/outputKeys", outputKeys);
+  webServer.on("/unlockHTTP", unlockHTTP);
   webServer.on("/garageToggleHTTP", garageToggleHTTP);
   webServer.on("/garageOpenHTTP", garageOpenHTTP);
   webServer.on("/garageCloseHTTP", garageCloseHTTP);
-  webServer.on("/RingBellHTTP", RingBellHTTP);
-  webServer.on("/DownloadConfigHTTP", DownloadConfigHTTP);
+  webServer.on("/ringBellHTTP", ringBellHTTP);
+  webServer.on("/downloadConfigHTTP", downloadConfigHTTP);
   webServer.on("/addKeyModeHTTP", addKeyModeHTTP);
   webServer.on("/purgeKeysHTTP", purgeKeysHTTP);
-  webServer.on("/DisplayConfig", DisplayConfig);
-  webServer.on("/OutputConfig", OutputConfig);
-  webServer.on("/OutputFSHTTP", OutputFSHTTP);
-  webServer.on("/DisplayFSHTTP", DisplayFSHTTP);
-  webServer.on("/OutputSDFSHTTP", OutputSDFSHTTP);
-  webServer.on("/DisplaySDFSHTTP", DisplaySDFSHTTP);
+  webServer.on("/displayConfig", displayConfig);
+  webServer.on("/outputConfig", outputConfig);
+  webServer.on("/outputFSHTTP", outputFSHTTP);
+  webServer.on("/displayFSHTTP", displayFSHTTP);
+  webServer.on("/outputSDFSHTTP", outputSDFSHTTP);
+  webServer.on("/displaySDFSHTTP", displaySDFSHTTP);
   webServer.on("/purgeConfigHTTP", purgeConfigHTTP);
   webServer.on("/restartESPHTTP", restartESPHTTP);
   webServer.on("/configSDtoFFatHTTP", configSDtoFFatHTTP);
@@ -1717,6 +1711,16 @@ void startWebServer() {
   webServer.on("/downloadAddressingStaticHTTP", downloadAddressingStaticHTTP);
   webServer.on("/addressingStaticSDtoFFatHTTP", addressingStaticSDtoFFatHTTP);
   webServer.on("/purgeAddressingStaticHTTP", purgeAddressingStaticHTTP);
+  webServer.on(UriRegex("/addKey/([0-9a-zA-Z]{4,8})"), HTTP_GET, [&]() {
+    writeKey(webServer.pathArg(0));
+    MainPage();
+  });
+  webServer.on(UriRegex("/serial/([0-9a-zA-Z_-]{4,10})"), HTTP_GET, [&]() {
+    Serial.print("URL Command entered: ");
+    Serial.print(webServer.pathArg(0));
+    executeCommand(webServer.pathArg(0));
+    MainPage();
+  });
   webServer.on("/", MainPage);
   webServer.begin();
   if (WiFi.status() == WL_CONNECTED) {
@@ -1730,13 +1734,13 @@ void startWebServer() {
 void setup() {
   delay(500);
   Serial.begin(115200);
-  Serial.println("Configuring WDT...");
+  Serial.println("Initializing WDT...");
   secondTick.attach(1, ISRwatchdog);
   fatfs_setup();
   sd_setup();
   Serial.print("DL32 firmware version ");
   Serial.println(codeVersion);
-  Serial.println("Initializing...");
+  Serial.println("configuring GPIO...");
   Serial.flush();
   pinMode(buzzer_pin, OUTPUT);
   pinMode(lockRelay_pin, OUTPUT);
