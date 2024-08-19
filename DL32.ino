@@ -1,8 +1,8 @@
 /*
 
   DL32 v3 by Mark Booth
-  For use with Wemos S3 and DL32 S3 rev 20231220
-  Last updated 18/08/2024
+  For use with Wemos S3 and DL32 S3 hardware rev 20240812
+  Last updated 19/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -23,7 +23,6 @@
     DS04 = Garage mode
 
   SD card pins:
-    3.0 SD card Pins
     CD DAT3 CS 34
     CMD DI DIN MOSI 36
     CLK SCLK 38
@@ -31,7 +30,7 @@
 
 */
 
-#define codeVersion 20240818
+#define codeVersion 20240819
 
 // Include Libraries
 #include <Arduino.h>
@@ -49,15 +48,15 @@
 #include <FS.h>
 #include <SD.h>
 
-// 3.0 Pins - Uncomment if using S3 Wemos board revision
+// Hardware Rev 20240812 pins [Since codeVersion 20240819]
 #define buzzer_pin 14
-#define neopix_pin 11
-#define ob_neopix_pin 47
+#define neopix_pin 47
 #define lockRelay_pin 1
 #define AUXButton_pin 6
 #define exitButton_pin 21
 #define bellButton_pin 17
 #define magSensor_pin 15
+#define attSensor_pin 9
 #define wiegand_0_pin 16
 #define wiegand_1_pin 18
 #define DS01 33
@@ -69,11 +68,12 @@
 #define GH03 12
 #define GH04 13
 #define GH05 8
-#define GH06 9
+#define GH06 11
 #define SD_CS_PIN 34
 #define SD_CLK_PIN 38
 #define SD_MOSI_PIN 36
 #define SD_MISO_PIN 35
+#define SD_CD_PIN 7
 
 // Define struct for storing configuration
 struct Config {
@@ -141,7 +141,6 @@ volatile int watchdogCount = 0;
 
 // Define onboard and offvoard neopixels
 Adafruit_NeoPixel pixel = Adafruit_NeoPixel(NUMPIXELS, neopix_pin, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel ob_pixel = Adafruit_NeoPixel(NUMPIXELS, ob_neopix_pin, NEO_GRB + NEO_KHZ800);
 
 // instantiate objects for Configuration struct, wifi client, webserver, mqtt client, qiegand reader and WDT timer
 Config config;
@@ -631,49 +630,31 @@ void addKeyMode() {
 
 // --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions --- Neopixel Functions ---
 
+//Onboard pixel uses G,R,B
+
 void setPixRed() {
-  pixel.setPixelColor(0, pixel.Color(10,0,0));
+  pixel.setPixelColor(0, pixel.Color(0,25,0));
   pixel.show();
 }
 
 void setPixAmber() {
-  pixel.setPixelColor(0, pixel.Color(10,3,0));
+  pixel.setPixelColor(0, pixel.Color(10,25,0));
   pixel.show();
 }
 
 void setPixGreen() {
-  pixel.setPixelColor(0, pixel.Color(0,10,0));
+  pixel.setPixelColor(0, pixel.Color(25,0,0));
   pixel.show();
 }
 
 void setPixPurple() {
-  pixel.setPixelColor(0, pixel.Color(5,0,10));
+  pixel.setPixelColor(0, pixel.Color(0,10,25));
   pixel.show();
 }
 
 void setPixBlue() {
-  pixel.setPixelColor(0, pixel.Color(0,0,10));
+  pixel.setPixelColor(0, pixel.Color(0,0,25));
   pixel.show();
-}
-
-void setOBPixRed() {
-  ob_pixel.setPixelColor(0, pixel.Color(0,10,0));
-  ob_pixel.show();
-}
-
-void setOBPixAmber() {
-  ob_pixel.setPixelColor(0, pixel.Color(10,3,0));
-  ob_pixel.show();
-}
-
-void setOBPixGreen() {
-  ob_pixel.setPixelColor(0, pixel.Color(10,0,0));
-  ob_pixel.show();
-}
-
-void setOBPixBlue() {
-  ob_pixel.setPixelColor(0, pixel.Color(0,0,10));
-  ob_pixel.show();
 }
 
 // --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions --- Wifi Functions ---
@@ -970,7 +951,7 @@ void ringBell() {
     for (int i = 0; i <= 3; i++) {
       for (int i = 0; i <= 25; i++) {
         ledcWriteTone(buzzer_pin, random(500, 10000));
-        delay(75);
+        delay(100);
         if (digitalRead(exitButton_pin) == LOW) {
           return;
         }
@@ -1796,7 +1777,6 @@ void setup() {
     }
   }
     
-  ob_pixel.begin(); //Setting onboard neopixel throws RMT errors for some reason
   pixel.begin();
 
   // instantiate listeners and initialize Wiegand reader, configure pins
@@ -1807,7 +1787,6 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(wiegand_1_pin), pinStateChanged, CHANGE);
   pinStateChanged();
   ledcAttachChannel(buzzer_pin, freq, resolution, channel);
-  setOBPixAmber();
   setPixBlue();
 }
 
