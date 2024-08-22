@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 19/08/2024
+  Last updated 22/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -30,7 +30,7 @@
 
 */
 
-#define codeVersion 20240819
+#define codeVersion 20240822
 
 // Include Libraries
 #include <Arduino.h>
@@ -207,6 +207,7 @@ void writeKey(String key) {
   Serial.print("Added key ");
   Serial.print(scannedKey);
   Serial.println(" to authorized list");
+  playSuccessTone();
 }
 
 // Polled function to check if a key has been recently read
@@ -264,6 +265,7 @@ void checkKey() {
     Serial.print("Key ");
     Serial.print(scannedKey);
     Serial.println(" is already authorized!");
+    playUnauthorizedTone();
   } else if (match_found and (add_mode == false)) {
     Serial.print("Key ");
     Serial.print(scannedKey);
@@ -841,12 +843,43 @@ void checkAUX() {
     if (count > 499) {
       setPixPurple();
       playUploadTone();
+    }
+    while ((digitalRead(AUXButton_pin) == LOW) && (count < 1000)) {
+      count++;
+      delay(10);
+    }
+    if (count > 999) {
+      setPixAmber();
+      playPurgeTone();
+    }
+    while (digitalRead(AUXButton_pin) == LOW && (count < 1500)) {
+      count++;
+      delay(10);
+    }
+    if (count > 1499) {
+      setPixRed();
+      playFactoryTone();
+    }
+    
+    if ((count > 499)&&(count < 1000)) {
       Serial.print("Uploading config file ");
       Serial.print(config_filename);
       Serial.println(" from SD card to FFat");
       delay(1000);
       configSDtoFFat();
       delay(1000);
+    } else if ((count > 999)&&(count < 1500)) {
+      Serial.println("Purging stored keys... ");
+      deleteFile(FFat, keys_filename);
+      Serial.println("Keys purged!");
+      delay(1000);
+    } else if (count > 1499) {
+      Serial.println("Factory resetting device... ");
+      deleteFile(FFat, keys_filename);
+      deleteFile(FFat, config_filename);
+      Serial.println("Factory reset complete. Restarting.");
+      ESP.restart();
+      delay(3000);
     }
     setPixBlue();
     return;
@@ -905,6 +938,22 @@ void playUnauthorizedTone() {
     delay(200);
     ledcWriteTone(buzzer_pin, 400);
     delay(600);
+    ledcWriteTone(buzzer_pin, 0);
+  }
+}
+
+void playPurgeTone() {
+  if (digitalRead(DS03) == HIGH) {
+    ledcWriteTone(buzzer_pin, 500);
+    delay(1000);
+    ledcWriteTone(buzzer_pin, 0);
+  }
+}
+
+void playFactoryTone() {
+  if (digitalRead(DS03) == HIGH) {
+    ledcWriteTone(buzzer_pin, 7000);
+    delay(1000);
     ledcWriteTone(buzzer_pin, 0);
   }
 }
@@ -1365,13 +1414,15 @@ void purgeConfigHTTP() {
 
 int FFat_file_download(String filename) {
   if (FFat_present) {
-    File download = FFat.open("/" + filename);
+    File download = FFat.open(filename);
     if (download) {
       webServer.sendHeader("Content-Type", "text/text");
       webServer.sendHeader("Content-Disposition", "attachment; filename=" + filename);
       webServer.sendHeader("Connection", "close");
       webServer.streamFile(download, "application/octet-stream");
       download.close();
+      Serial.print("Downloading file ");
+      Serial.println(filename);
       return 0;
     }
   }
@@ -1775,6 +1826,8 @@ void setup() {
     if (strcmp(config.mqtt_enabled, "true") == 0) {
       mqttConnect();
     }
+  } else {
+    Serial.println("Running in offline mode.");
   }
     
   pixel.begin();
