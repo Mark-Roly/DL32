@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 22/08/2024
+  Last updated 24/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -30,7 +30,7 @@
 
 */
 
-#define codeVersion 20240822
+#define codeVersion 20240824
 
 // Include Libraries
 #include <Arduino.h>
@@ -219,8 +219,8 @@ void checkKey() {
   int keypadCounter = 0;
   if (scannedKey == "") {
     return;
-  //Othwerwise if the key pressed is 0A (Asterisk), then ring the bell and finish
-  } else if (((scannedKey.substring(0)) == "0")&&((scannedKey.substring(1)) == "A")) {
+  //Othwerwise if the key pressed is 0A (*/ESC), then ring the bell and finish
+  } else if (scannedKey == "0A") {
     ringBell();
     scannedKey = "";
     return;
@@ -239,8 +239,8 @@ void checkKey() {
       //If the input was a keypad digit, then reset the inter-key timeout and wait for another one
       if ((scannedKey.length()) == 2) {
         keypadCounter = 0;
-        //If the key pressed is 0B (Hash), then exit the loop kof waiting for input
-        if (((scannedKey.substring(0)) == "0")&&((scannedKey.substring(1)) == "B")) {
+        //If the key pressed is 0B (#/ENT, then exit the loop of waiting for input
+        if (scannedKey == "0B") {
           keypadCounter = keypadDur;
         } else {
           keypadBuffer += scannedKey.substring(1);
@@ -624,7 +624,6 @@ void addKeyMode() {
     Serial.println("No new key added");
   } else {
     Serial.print("scannedKey: ");
-    Serial.println(scannedKey);
   }
   setPixBlue();
   return;
