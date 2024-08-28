@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 24/08/2024
+  Last updated 28/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -30,7 +30,7 @@
 
 */
 
-#define codeVersion 20240824
+#define codeVersion 20240828
 
 // Include Libraries
 #include <Arduino.h>
@@ -100,7 +100,7 @@ struct Config {
 #define keyDur 5
 #define garageDur 500
 #define addKeyDur 10
-#define unrecognizedKeyDur 5
+#define unrecognizedKeyDur 2
 #define WDT_TIMEOUT 60
 
 // Number of neopixels used
@@ -163,38 +163,55 @@ void ISRwatchdog() {
 
 // function that checks if a provided key is present in the authorized list
 boolean keyAuthorized(String key) {
+  boolean verboseScanOutput = false;
   File keysFile = FFat.open(keys_filename, "r");
   int charMatches = 0;
   char tagBuffer[11];
   Serial.print("Checking key: ");
   Serial.println(key);
+  if (verboseScanOutput) {
+    Serial.print("Input Key length: ");
+    Serial.println(key.length());
+  }
   while (keysFile.available()) {
     int cardDigits = (keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer))-1);
-    //Serial.print("card digits = ");
-    //Serial.println(String(cardDigits));
-    tagBuffer[cardDigits] = 0;
+    if (verboseScanOutput) {
+      Serial.print("card digits = ");
+      Serial.println(String(cardDigits));
+      tagBuffer[cardDigits] = 0;
+    }
     charMatches = 0;
     for (int loopCount = 0; loopCount < (cardDigits); loopCount++) {
-      //Serial.print("comparing ");
-      //Serial.print(key[loopCount]);
-      //Serial.print(" with ");
-      //Serial.println(tagBuffer[loopCount]);
+      if (verboseScanOutput) {
+        Serial.print("comparing ");
+        Serial.print(key[loopCount]);
+        Serial.print(" with ");
+        Serial.println(tagBuffer[loopCount]);
+      }
       if (key[loopCount] == tagBuffer[loopCount]) {
         charMatches++;
       }
     }
-    //Serial.print("charMatches: ");
-    //Serial.println(charMatches);
-    //Serial.print("cardDigits: ");
-    //Serial.println(cardDigits);
-    if (charMatches == cardDigits) {
-      //Serial.print(tagBuffer);
-      //Serial.print(" - ");
-      //Serial.println("MATCH");
-      //matchedCards++;
+    if (verboseScanOutput) {
+      Serial.print("charMatches: ");
+      Serial.println(charMatches);
+      Serial.print("cardDigits: ");
+      Serial.println(cardDigits);
+      Serial.print("Input Key length: ");
+      Serial.println(key.length());
+    }
+    if ((charMatches == cardDigits)&&(cardDigits == key.length())) {
+      if (verboseScanOutput) {
+        Serial.print(tagBuffer);
+        Serial.print(" - ");
+        Serial.println("MATCH");
+      }
+      keysFile.close();
       return true;
     } else {
-      //Serial.println("NO MATCH");
+      if (verboseScanOutput) {
+        Serial.println("NO MATCH");
+      }
     }
   }
   keysFile.close();
@@ -301,13 +318,15 @@ void stateChanged(bool plugged, const char* message) {
 // IRQ function for read cards
 void receivedData(uint8_t* data, uint8_t bits, const char* message) {
   String key = "";
+  String key_buff = "";
   add_count = (addKeyDur * 100);
   //Print value in HEX
   uint8_t bytes = (bits+7)/8;
   for (int i=0; i<bytes; i++) {
     String FirstNum = (String (data[i] >> 4, 16));
     String SecondNum = (String (data[i] & 0xF, 16));
-    key = (key + FirstNum + SecondNum);
+    key_buff = key;
+    key = (FirstNum + SecondNum + key_buff);
   }
   scannedKey = key;
   scannedKey.toUpperCase();
@@ -597,16 +616,18 @@ void keysFStoSD() {
 }
 
 void addKeyMode() {
-  playAddModeTone();
   setPixPurple();
-  Serial.println("Add Key mode - Waiting for key");
+  playAddModeTone();
+    Serial.println("Add Key mode - Waiting for key");
   add_count = 0;
   add_mode = true;
   while (add_count < (addKeyDur * 100) && add_mode) {
     noInterrupts();
     wiegand.flush();
     interrupts();
-
+    if (add_count % 100 == 0) {
+      playBipTone();
+    }
     if (Serial.available()) {
       serialCmd = Serial.readStringUntil('\n');
       serialCmd.trim();
@@ -920,11 +941,19 @@ void checkMagSensor() {
 
 // --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions ---
 
+void playBipTone() {
+  if (digitalRead(DS03) == HIGH) {
+    ledcWriteTone(buzzer_pin, 100);
+    delay(100);
+    ledcWriteTone(buzzer_pin, 0);
+  }
+}
+
 void playUnlockTone() {
   if (digitalRead(DS03) == HIGH) {
     for (int i = 0; i <= 1; i++) {
       ledcWriteTone(buzzer_pin, 5000);
-      delay(100);
+      delay(50);
       ledcWriteTone(buzzer_pin, 0);
       delay(100);
     }
