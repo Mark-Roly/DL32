@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 28/08/2024
+  Last updated 29/08/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -30,7 +30,7 @@
 
 */
 
-#define codeVersion 20240828
+#define codeVersion 20240829
 
 // Include Libraries
 #include <Arduino.h>
@@ -237,14 +237,18 @@ void checkKey() {
   if (scannedKey == "") {
     return;
   //Othwerwise if the key pressed is 0A (*/ESC), then ring the bell and finish
-  } else if (scannedKey == "0A") {
+  } else if ((scannedKey == "0A") && (add_mode == false)) {
     ringBell();
     scannedKey = "";
+    return;
+  } else if ((scannedKey == "0B")) {
+    scannedKey = "";
+    add_mode = false;
     return;
   }
   //function to recognize keypad input
   if ((scannedKey.length()) == 2) {
-    Serial.print("Keypad entry: ");
+    Serial.println("Keypad entry...");
     keypadBuffer += scannedKey.substring(1);
     scannedKey = "";
     while ((keypadCounter < keypadDur) && (keypadBuffer.length() < 12)) {
@@ -259,14 +263,30 @@ void checkKey() {
         //If the key pressed is 0B (#/ENT, then exit the loop of waiting for input
         if (scannedKey == "0B") {
           keypadCounter = keypadDur;
+        } else if (scannedKey == "0A") {
+          Serial.println("Cancelling keypad input");
+          add_mode = false;
+          scannedKey = "";
+          return;
         } else {
           keypadBuffer += scannedKey.substring(1);
         }
         scannedKey = "";
       }
     }
-    Serial.println(keypadBuffer);
-    scannedKey = keypadBuffer;
+    if (keypadBuffer.length() < 4) {
+      Serial.println("Key too short - discarded");
+      add_mode = false;
+      playUnauthorizedTone();
+      return;
+    } else if (keypadBuffer.length() > 16) {
+      Serial.println("Key too long - discarded");
+      add_mode = false;
+      playUnauthorizedTone();
+      return;
+    } else {
+      scannedKey = keypadBuffer;
+    }
   }
 
   if (MQTTclient.connected()) {
