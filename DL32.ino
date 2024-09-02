@@ -2,10 +2,11 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 29/08/2024
+  Last updated 02/09/2024
 
   https://github.com/Mark-Roly/DL32/
 
+  Board Profile: LOLIN S3 Mini
   Upload settings:
     USB CDC on Boot: Enabled
     CPU frequency: 240Mhz (WiFi)
@@ -30,7 +31,7 @@
 
 */
 
-#define codeVersion 20240829
+#define codeVersion 20240902
 
 // Include Libraries
 #include <Arduino.h>
@@ -44,6 +45,7 @@
 #include <LittleFS.h>
 #include <Ticker.h>
 #include <uri/UriRegex.h>
+#include <uptime_formatter.h>
 #include <FFat.h>
 #include <FS.h>
 #include <SD.h>
@@ -87,6 +89,7 @@ struct Config {
   char mqtt_stat_topic[32];
   char mqtt_keys_topic[32];
   char mqtt_addr_topic[32];
+  char mqtt_uptm_topic[32];
   char mqtt_client_name[32];
   char mqtt_auth[8];
   char mqtt_user[32];
@@ -157,6 +160,19 @@ void ISRwatchdog() {
     Serial.println("Watchdog invoked!");
     ESP.restart();
   }
+}
+
+// --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime 
+
+
+void publishUptime() {
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(config.mqtt_uptm_topic, uptime_formatter::getUptime().c_str());  
+  } 
+}
+
+void printUptime() {
+  Serial.println("Uptime: " + uptime_formatter::getUptime());
 }
 
 // --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions --- Wiegand Functions ---
@@ -543,10 +559,12 @@ void loadFSJSON(const char* config_filename, Config& config) {
   strlcpy(config.mqtt_cmnd_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_cmnd_topic));
   strlcpy(config.mqtt_keys_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_keys_topic));
   strlcpy(config.mqtt_addr_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_addr_topic));
+  strlcpy(config.mqtt_uptm_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_uptm_topic));
   strcat(config.mqtt_stat_topic, "/stat");
   strcat(config.mqtt_cmnd_topic, "/cmnd");
   strcat(config.mqtt_keys_topic, "/keys");
   strcat(config.mqtt_addr_topic, "/addr");
+  strcat(config.mqtt_uptm_topic, "/uptm");
   
   strlcpy(config.mqtt_client_name, doc["mqtt_client_name"] | "DEFAULT_dl32s3", sizeof(config.mqtt_client_name));
   strlcpy(config.mqtt_auth, doc["mqtt_auth"] | "true", sizeof(config.mqtt_auth));
@@ -880,6 +898,24 @@ void checkAUX() {
       count++;
       delay(10);
     }
+    if (count < 499) {
+      Serial.print("Code version: ");
+      Serial.println(codeVersion);
+      Serial.print("SD Card present: ");
+      if (digitalRead(SD_CD_PIN)) {
+        Serial.println("false");
+      } else {
+        Serial.println("true");
+      }
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+      char IP[] = "xxx.xxx.xxx.xxx";
+      IPAddress ip = WiFi.localIP();
+      ip.toString().toCharArray(IP, 16);
+      mqttPublish(config.mqtt_addr_topic, IP);
+      Serial.println("Uptime: " + uptime_formatter::getUptime());
+      publishUptime();
+    }
     if (count > 499) {
       setPixPurple();
       playUploadTone();
@@ -1206,6 +1242,9 @@ boolean executeCommand(String command) {
     ESP.restart();
   } else if (command.equals("unlock")) {
     unlock(5);
+  } else if (command.equals("uptime")) {
+    publishUptime();
+    printUptime();
   } else if ((command.equals("garage_toggle")&& garage_mode)) {
     Serial.println("Toggling garage door");
     mqttPublish(config.mqtt_stat_topic, "Toggling garage door");
@@ -1662,16 +1701,16 @@ void siteModes() {
   pageContent += F("<br/>");
   pageContent += F("<a class='smalltext'>");
   if (forceOffline) {
-    pageContent += F(" Forced Offline Mode /");
+    pageContent += F(" [Forced Offline Mode] ");
   }
   if (failSecure == false) {
-    pageContent += F(" Failsafe Mode /");
+    pageContent += F(" [Failsafe Mode] ");
   }
   if (digitalRead(DS03) == LOW) {
-    pageContent += F(" Silent Mode /");
+    pageContent += F(" [Silent Mode] ");
   }
   if (garage_mode) {
-    pageContent += F(" Garage Mode /");
+    pageContent += F(" [Garage Mode] ");
   }
   pageContent += F("</a>");
 }
@@ -1831,6 +1870,7 @@ void setup() {
   pinMode(bellButton_pin, INPUT_PULLUP);
   pinMode(magSensor_pin, INPUT_PULLUP);
   pinMode(SD_CS_PIN, OUTPUT);
+  pinMode(SD_CD_PIN, INPUT_PULLUP);
   pinMode(DS01, INPUT_PULLUP);
   pinMode(DS02, INPUT_PULLUP);
   pinMode(DS03, INPUT_PULLUP);
