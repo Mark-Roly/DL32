@@ -182,7 +182,7 @@ boolean keyAuthorized(String key) {
   boolean verboseScanOutput = false;
   File keysFile = FFat.open(keys_filename, "r");
   int charMatches = 0;
-  char tagBuffer[11];
+  char keyBuffer[11];
   Serial.print("Checking key: ");
   Serial.println(key);
   if (verboseScanOutput) {
@@ -190,11 +190,11 @@ boolean keyAuthorized(String key) {
     Serial.println(key.length());
   }
   while (keysFile.available()) {
-    int cardDigits = (keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer))-1);
+    int cardDigits = (keysFile.readBytesUntil('\n', keyBuffer, sizeof(keyBuffer))-1);
     if (verboseScanOutput) {
       Serial.print("card digits = ");
       Serial.println(String(cardDigits));
-      tagBuffer[cardDigits] = 0;
+      keyBuffer[cardDigits] = 0;
     }
     charMatches = 0;
     for (int loopCount = 0; loopCount < (cardDigits); loopCount++) {
@@ -202,9 +202,9 @@ boolean keyAuthorized(String key) {
         Serial.print("comparing ");
         Serial.print(key[loopCount]);
         Serial.print(" with ");
-        Serial.println(tagBuffer[loopCount]);
+        Serial.println(keyBuffer[loopCount]);
       }
-      if (key[loopCount] == tagBuffer[loopCount]) {
+      if (key[loopCount] == keyBuffer[loopCount]) {
         charMatches++;
       }
     }
@@ -218,7 +218,7 @@ boolean keyAuthorized(String key) {
     }
     if ((charMatches == cardDigits)&&(cardDigits == key.length())) {
       if (verboseScanOutput) {
-        Serial.print(tagBuffer);
+        Serial.print(keyBuffer);
         Serial.print(" - ");
         Serial.println("MATCH");
       }
@@ -255,10 +255,9 @@ void writeKey(String key) {
 void removeKey(String key) {
   boolean verboseScanOutput = false;
   File keysFile = FFat.open(keys_filename, "r");
-  char keyBuffer[11];
   int charMatches = 0;
   int removeMatches = 0;
-  char tagBuffer[11];
+  char keyBuffer[11];
   if (FFat.exists("/keys.txt") == false) {
     Serial.println("Key file not present. Cancelling operation.");
     return;
@@ -272,21 +271,21 @@ void removeKey(String key) {
   Serial.print("Checking key for removal: ");
   Serial.println(key);
   while (keysFile.available()) {
-    int cardDigits = (keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer))-1);
+    int cardDigits = (keysFile.readBytesUntil('\n', keyBuffer, sizeof(keyBuffer))-1);
     if (verboseScanOutput) {
       Serial.print("card digits = ");
       Serial.println(String(cardDigits));
     }
-    tagBuffer[cardDigits] = 0;
+    keyBuffer[cardDigits] = 0;
     charMatches = 0;
     for (int loopCount = 0; loopCount < (cardDigits); loopCount++) {
       if (verboseScanOutput) {
         Serial.print("comparing ");
         Serial.print(key[loopCount]);
         Serial.print(" with ");
-        Serial.println(tagBuffer[loopCount]);
+        Serial.println(keyBuffer[loopCount]);
       }
-      if (key[loopCount] == tagBuffer[loopCount]) {
+      if (key[loopCount] == keyBuffer[loopCount]) {
         charMatches++;
       }
     }
@@ -300,11 +299,11 @@ void removeKey(String key) {
     }
     if ((charMatches == cardDigits)&&(cardDigits == key.length())) {
       if (verboseScanOutput) {
-        Serial.print(tagBuffer);
+        Serial.print(keyBuffer);
         Serial.print(" - ");
         Serial.println("MATCH");
         Serial.print("----- EXCLUDING ");
-        Serial.print(tagBuffer);
+        Serial.print(keyBuffer);
         Serial.println(" FROM NEW FILE");
       }
       removeMatches++;
@@ -314,10 +313,10 @@ void removeKey(String key) {
       if (verboseScanOutput) {
         Serial.println("NO MATCH");
         Serial.print("----- COPYING ");
-        Serial.print(tagBuffer);
+        Serial.print(keyBuffer);
         Serial.println(" TO NEW FILE");
       }
-    appendlnFile(FFat, "/keys_temp", tagBuffer);
+    appendlnFile(FFat, "/keys_temp", keyBuffer);
     }
   }
   keysFile.close();
