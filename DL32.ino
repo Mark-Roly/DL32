@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 02/09/2024
+  Last updated 03/09/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240902
+#define codeVersion 20240903
 
 // Include Libraries
 #include <Arduino.h>
@@ -235,12 +235,106 @@ boolean keyAuthorized(String key) {
 }
 
 void writeKey(String key) {
-  appendlnFile(FFat, keys_filename, key.c_str());
-  add_mode = false;
-  Serial.print("Added key ");
-  Serial.print(scannedKey);
-  Serial.println(" to authorized list");
-  playSuccessTone();
+  if (keyAuthorized(key)) {
+    add_mode = false;
+    Serial.print("Key ");
+    Serial.print(key);
+    Serial.println(" is already authorized");
+    playUnauthorizedTone();
+  } else {
+    appendlnFile(FFat, keys_filename, key.c_str());
+    add_mode = false;
+    Serial.print("Added key ");
+    Serial.print(key);
+    Serial.println(" to authorized list");
+    playSuccessTone();
+  }
+
+}
+
+void removeKey(String key) {
+  boolean verboseScanOutput = false;
+  File keysFile = FFat.open(keys_filename, "r");
+  char keyBuffer[11];
+  int charMatches = 0;
+  int removeMatches = 0;
+  char tagBuffer[11];
+  if (FFat.exists("/keys.txt") == false) {
+    Serial.println("Key file not present. Cancelling operation.");
+    return;
+  }
+  if (FFat.exists("/keys_old")) {
+    deleteFile(FFat, "/keys_old");
+  }
+  if (FFat.exists("/keys_temp")) {
+    deleteFile(FFat, "/keys_temp");
+  }
+  Serial.print("Checking key for removal: ");
+  Serial.println(key);
+  while (keysFile.available()) {
+    int cardDigits = (keysFile.readBytesUntil('\n', tagBuffer, sizeof(tagBuffer))-1);
+    if (verboseScanOutput) {
+      Serial.print("card digits = ");
+      Serial.println(String(cardDigits));
+    }
+    tagBuffer[cardDigits] = 0;
+    charMatches = 0;
+    for (int loopCount = 0; loopCount < (cardDigits); loopCount++) {
+      if (verboseScanOutput) {
+        Serial.print("comparing ");
+        Serial.print(key[loopCount]);
+        Serial.print(" with ");
+        Serial.println(tagBuffer[loopCount]);
+      }
+      if (key[loopCount] == tagBuffer[loopCount]) {
+        charMatches++;
+      }
+    }
+    if (verboseScanOutput) {
+      Serial.print("charMatches: ");
+      Serial.println(charMatches);
+      Serial.print("cardDigits: ");
+      Serial.println(cardDigits);
+      Serial.print("Input Key length: ");
+      Serial.println(key.length());
+    }
+    if ((charMatches == cardDigits)&&(cardDigits == key.length())) {
+      if (verboseScanOutput) {
+        Serial.print(tagBuffer);
+        Serial.print(" - ");
+        Serial.println("MATCH");
+        Serial.print("----- EXCLUDING ");
+        Serial.print(tagBuffer);
+        Serial.println(" FROM NEW FILE");
+      }
+      removeMatches++;
+      //exclude from copy
+      
+    } else {
+      if (verboseScanOutput) {
+        Serial.println("NO MATCH");
+        Serial.print("----- COPYING ");
+        Serial.print(tagBuffer);
+        Serial.println(" TO NEW FILE");
+      }
+    appendlnFile(FFat, "/keys_temp", tagBuffer);
+    }
+  }
+  keysFile.close();
+  if (removeMatches > 0) {
+    Serial.print("Removed key ");
+    Serial.print(key);
+    Serial.println(" from authorized list.");
+    renameFile(FFat, keys_filename, "/keys_old");
+    renameFile(FFat, "/keys_temp", keys_filename);
+  } else {
+    Serial.print("Key ");
+    Serial.print(key);
+    Serial.println(" not present in authorized list.");
+  }
+  if (FFat.exists("/keys_temp")) {
+    deleteFile(FFat, "/keys_temp");
+  }
 }
 
 // Polled function to check if a key has been recently read
@@ -408,7 +502,7 @@ void fatfs_setup() {
   FFat_present = true;
 }
 
-void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
+void listDir(fs::FS & fs, const char * dirname, uint8_t levels){
   Serial.printf("Listing directory: %s... ", dirname);
   File root = fs.open(dirname);
   if(!root){
@@ -437,7 +531,7 @@ void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
   }
 }
 
-void readFile(fs::FS &fs, const char * path){
+void readFile(fs::FS & fs, const char * path){
   Serial.printf("Reading file: %s... ", path);
   File file = fs.open(path);
   if(!file || file.isDirectory()){
@@ -451,85 +545,67 @@ void readFile(fs::FS &fs, const char * path){
   file.close();
 }
 
-void writeFile(fs::FS &fs, const char * path, const char * message){
-    Serial.printf("Writing file: %s... ", path);
-
-    File file = fs.open(path, FILE_WRITE);
-    if(!file){
-        Serial.println("failed to open file for writing");
-        return;
-    }
-    if(file.print(message)){
-        Serial.println("file written");
-    } else {
-        Serial.println("write failed");
-    }
-    file.close();
+void writeFile(fs::FS & fs, const char * path, const char * message){
+  Serial.printf("Writing file: %s... ", path);
+  File file = fs.open(path, FILE_WRITE);
+  if(!file){
+    Serial.println("failed to open file for writing");
+    return;
+  }
+  if(file.print(message)){
+      Serial.println("file written");
+  } else {
+    Serial.println("write failed");
+  }
+  file.close();
 }
 
-void appendFile(fs::FS &fs, const char * path, const char * message){
-    Serial.printf("Appending to file: %s... ", path);
-
-    File file = fs.open(path, FILE_APPEND);
-    if(!file){
-        Serial.println("- failed to open file for appending");
-        return;
-    }
-    if(file.print(message)){
-        Serial.println("message appended");
-    } else {
-        Serial.println("append failed");
-    }
-    file.close();
+void appendlnFile(fs::FS & fs, const char * path, const char * message){
+  //Serial.printf("Appending line to file: %s... ", path);
+  File file = fs.open(path, FILE_APPEND);
+  if(!file){
+    Serial.println("- failed to open file for appending line");
+    return;
+  }
+  if(file.println(message)){
+    //Serial.println("message line appended");
+  } else {
+    Serial.println("append line failed");
+  }
+  file.close();
 }
 
-void appendlnFile(fs::FS &fs, const char * path, const char * message){
-    //Serial.printf("Appending line to file: %s... ", path);
-
-    File file = fs.open(path, FILE_APPEND);
-    if(!file){
-        Serial.println("- failed to open file for appending line");
-        return;
-    }
-    if(file.println(message)){
-        //Serial.println("message line appended");
-    } else {
-        Serial.println("append line failed");
-    }
-    file.close();
-}
-
-void renameFile(fs::FS &fs, const char * path1, const char * path2){
-  Serial.printf("Renaming file %s to %s... ", path1, path2);
+void renameFile(fs::FS & fs, const char * path1, const char * path2){
+  //Serial.printf("Renaming file %s to %s... ", path1, path2);
   if (fs.rename(path1, path2)) {
-    Serial.println("file renamed");
+    //Serial.println("file renamed");
   } else {
     Serial.println("rename failed");
   }
 }
 
 void deleteFile(fs::FS & fs, const char * path) {
-  Serial.printf("Deleting file: %s...", path);
+  //Serial.printf("Deleting file: %s...", path);
   if (fs.remove(path)) {
-    Serial.println("file deleted");
+    //Serial.println("file deleted");
   } else {
     Serial.println("delete failed");
   }
 }
 
 void createDir(fs::FS & fs, const char * path) {
-  Serial.printf("Creating Dir: %s\n", path);
+  //Serial.printf("Creating Dir: %s\n", path);
   if (fs.mkdir(path)) {
-    Serial.println("Dir created");
+    //Serial.println("Dir created");
   } else {
     Serial.println("mkdir failed");
   }
 }
 
 void removeDir(fs::FS & fs, const char * path) {
-  Serial.printf("Removing Dir: %s\n", path);
+  //Serial.printf("Removing Dir: %s\n", path);
   if (fs.rmdir(path)) {
-    Serial.println("Dir removed");
+    //Serial.println("Dir removed");
   } else {
     Serial.println("rmdir failed");
   }
@@ -1832,7 +1908,11 @@ void startWebServer() {
   webServer.on("/purgeAddressingStaticHTTP", purgeAddressingStaticHTTP);
   webServer.on(UriRegex("/addKey/([0-9a-zA-Z]{4,8})"), HTTP_GET, [&]() {
     writeKey(webServer.pathArg(0));
-    MainPage();
+    displayKeys();
+  });
+  webServer.on(UriRegex("/remKey/([0-9a-zA-Z]{4,8})"), HTTP_GET, [&]() {
+    removeKey(webServer.pathArg(0));
+    displayKeys();
   });
   webServer.on(UriRegex("/serial/([0-9a-zA-Z_-]{4,10})"), HTTP_GET, [&]() {
     Serial.print("URL Command entered: ");
