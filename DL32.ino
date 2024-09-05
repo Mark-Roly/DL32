@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 03/09/2024
+  Last updated 05/09/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240903
+#define codeVersion 20240905
 
 // Include Libraries
 #include <Arduino.h>
@@ -703,10 +703,11 @@ void keysSDtoFFat() {
     Serial.println("Keys file successfuly copied from SD to FFat");
   } else {
     Serial.println("");
+    playUnauthorizedTone();
     Serial.println("No SD Card Mounted or no such file");
     return;
   }
-  ESP.restart();
+  playSuccessTone();
 }
 
 void keysFStoSD() {
@@ -1411,7 +1412,7 @@ void outputKeys() {
   Serial.println("\n");
 }
 
-// Output a list of allowed keys to serial
+// Restart unit
 void restartESPHTTP() {
   webServer.sendHeader("Location", "/",true);  
   webServer.send(302, "text/plain", "");
@@ -1423,22 +1424,29 @@ void restartESPHTTP() {
 
 // Display allowed keys in webUI
 void displayKeys() {
-  sendHTMLHeader();
-  siteButtons();
-  pageContent += F("<br/> <textarea readonly>");
+  pageContent += F("<br/> <table class='keyTable'>");
   char buffer[64];
-  File dispFile = FFat.open(keys_filename);
-  while (dispFile.available()) {
-    int l = dispFile.readBytesUntil('\n', buffer, sizeof(buffer));
+  int count = 0;
+  File keyFile = FFat.open(keys_filename);
+  while (keyFile.available()) {
+    int l = keyFile.readBytesUntil('\n', buffer, sizeof(buffer));
     buffer[l] = 0;
+    pageContent += F("<tr><td class='keyCell'>");
     pageContent += F(buffer);
+    pageContent += F("</td><td class='keyDelCell'>");
+    pageContent += F("<a class='keyDelLink' href='/remKey/");
+    pageContent += F(buffer);
+    pageContent += F("'>DELETE</a>");
+    pageContent += F("</td></tr>");
+    count++;
   }
-  pageContent += F("</textarea>");
-  siteModes();
-  siteFooter();
-  sendHTMLContent();
-  sendHTMLStop();
-  dispFile.close();
+  if (count < 1) {
+    pageContent += F("<tr><td class='keyCell'>");
+    pageContent += F("[NO SAVED KEYS]");
+    pageContent += F("</td></tr>");
+  }
+  pageContent += F("</table>");
+  keyFile.close();
 }
 
 // Output config to serial
@@ -1483,7 +1491,7 @@ void displayConfig() {
 void MainPage() {
   sendHTMLHeader();
   siteButtons();
-  pageContent += F("<br/> <textarea readonly></textarea>");
+  displayKeys();
   siteModes();
   siteFooter();
   sendHTMLContent();
@@ -1546,20 +1554,15 @@ void configSDtoFFatHTTP() {
 }
 
 void keysSDtoFFatHTTP() {
+  webServer.sendHeader("Location", "/",true);  
+  webServer.send(302, "text/plain", "");
   keysSDtoFFat();
-  sendHTMLHeader();
-  siteButtons();
-  pageContent += F("<br/> <textarea readonly>Copied keys from SD to FFat</textarea>");
-  siteModes();
-  siteFooter();
-  sendHTMLContent();
-  sendHTMLStop();
 }
 
 void purgeKeysHTTP() {
+  deleteFile(FFat, keys_filename);
   webServer.sendHeader("Location", "/",true);  
   webServer.send(302, "text/plain", "");
-  deleteFile(FFat, keys_filename);
 }
 
 void addKeyModeHTTP() {
@@ -1756,6 +1759,12 @@ void siteHeader() {
   pageContent += F("div {width: 350px; margin: 20px auto; text-align: center; border: 3px solid #ff3200; background-color: #555555; left: auto; right: auto;}");
   pageContent += F(".header {font-family: Arial, Helvetica, sans-serif; font-size: 20px; color: #ff3200;}");
   pageContent += F(".smalltext {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #ff3200;}");
+  pageContent += F(".keyTable {background-color: #303030; font-size: 11px; width: 300px; resize: vertical; margin-left: auto; margin-right: auto; border: 1px solid #ff3200; border-collapse: collapse;}");
+  pageContent += F(".keyCell {height: 15px; color: #ff3200;}");
+  pageContent += F(".keyDelCell {height: 15px; width: 45px; background-color: #ff3200; color: black;}");
+  pageContent += F(".keyDelCell:hover {height: 15px; width: 45px; background-color: #ef2200; color: black}");
+  pageContent += F(".keyDelLink {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: black; text-decoration: none;}");
+  pageContent += F("tr, td {border: 1px solid #ff3200;}");
   pageContent += F("button {width: 300px; background-color: #ff3200; border: none; text-decoration: none;}");
   pageContent += F("button:hover {width: 300px; background-color: #ef2200; border: none; text-decoration: none;}");
   pageContent += F("h1 {font-family: Arial, Helvetica, sans-serif; color: #ff3200;}");
@@ -1814,8 +1823,8 @@ void siteButtons() {
   pageContent += F("<br/>");
   //pageContent += F("<a href='/outputKeys'><button>Output keys to Serial</button></a>");
   //pageContent += F("<br/>");
-  pageContent += F("<a href='/displayKeys'><button>Display keys in page</button></a>");
-  pageContent += F("<br/>");
+  //pageContent += F("<a href='/displayKeys'><button>Display keys in page</button></a>");
+  //pageContent += F("<br/>");
   pageContent += F("<a href='/keysSDtoFFatHTTP'><button>Upload keys SD to DL32</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/addKeyModeHTTP'><button>Enter add key mode</button></a>");
@@ -1859,7 +1868,6 @@ void siteButtons() {
 
 void siteFooter() {
   IPAddress ip_addr = WiFi.localIP();
-  pageContent += F("<br/>");
   pageContent += F("<a class='smalltext'>");
   pageContent += F("IP: ");
   pageContent += (String(ip_addr[0]) + "." + String(ip_addr[1]) + "." + String(ip_addr[2]) + "." + String(ip_addr[3]));
@@ -1868,8 +1876,12 @@ void siteFooter() {
   pageContent += F("<a class='smalltext'>");
   pageContent += F("ver: ");
   pageContent += (String(codeVersion));
+  pageContent += F("&nbsp;&nbsp;");
   pageContent += F("</a>");
-  pageContent += F(" <br/></div>");
+  pageContent += F("<a class='smalltext' href='https://github.com/Mark-Roly/DL32' target='_blank' rel='noopener noreferrer'>");
+  pageContent += F("github");
+  pageContent += F("</a>");
+  pageContent += F("<br/><br/></div>");
   pageContent += F("</body></html>");
 }
 
@@ -1879,7 +1891,6 @@ void FunctionX() {
 
 void startWebServer() {
   webServer.on("/downloadKeysHTTP", downloadKeysHTTP);
-  webServer.on("/displayKeys", displayKeys);
   webServer.on("/outputKeys", outputKeys);
   webServer.on("/unlockHTTP", unlockHTTP);
   webServer.on("/garageToggleHTTP", garageToggleHTTP);
@@ -1907,11 +1918,11 @@ void startWebServer() {
   webServer.on("/purgeAddressingStaticHTTP", purgeAddressingStaticHTTP);
   webServer.on(UriRegex("/addKey/([0-9a-zA-Z]{4,8})"), HTTP_GET, [&]() {
     writeKey(webServer.pathArg(0));
-    displayKeys();
+    MainPage();
   });
   webServer.on(UriRegex("/remKey/([0-9a-zA-Z]{4,8})"), HTTP_GET, [&]() {
     removeKey(webServer.pathArg(0));
-    displayKeys();
+    MainPage();
   });
   webServer.on(UriRegex("/serial/([0-9a-zA-Z_-]{4,10})"), HTTP_GET, [&]() {
     Serial.print("URL Command entered: ");
