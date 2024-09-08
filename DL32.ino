@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 05/09/2024
+  Last updated 08/09/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240905
+#define codeVersion 20240908
 
 // Include Libraries
 #include <Arduino.h>
@@ -46,8 +46,8 @@
 #include <Ticker.h>
 #include <uri/UriRegex.h>
 #include <uptime_formatter.h>
-#include <FFat.h>
 #include <FS.h>
+#include <FFat.h>
 #include <SD.h>
 
 // Hardware Rev 20240812 pins [Since codeVersion 20240819]
@@ -108,6 +108,8 @@ struct Config {
 
 // Number of neopixels used
 #define NUMPIXELS 1
+
+#define FORMAT_FFAT false
 
 long lastMsg = 0;
 long disconCount = 0;
@@ -182,7 +184,7 @@ boolean keyAuthorized(String key) {
   boolean verboseScanOutput = false;
   File keysFile = FFat.open(keys_filename, "r");
   int charMatches = 0;
-  char keyBuffer[11];
+  char keyBuffer[16];
   Serial.print("Checking key: ");
   Serial.println(key);
   if (verboseScanOutput) {
@@ -241,6 +243,11 @@ void writeKey(String key) {
     Serial.print(key);
     Serial.println(" is already authorized");
     playUnauthorizedTone();
+  } else if ((key.length() < 3)||(key.length() > 10)) {
+    add_mode = false;
+    Serial.print("Key ");
+    Serial.print(key);
+    Serial.println(" is an invalid length");
   } else {
     appendlnFile(FFat, keys_filename, key.c_str());
     add_mode = false;
@@ -257,8 +264,8 @@ void removeKey(String key) {
   File keysFile = FFat.open(keys_filename, "r");
   int charMatches = 0;
   int removeMatches = 0;
-  char keyBuffer[11];
-  if (FFat.exists("/keys.txt") == false) {
+  char keyBuffer[16];
+  if (FFat.exists(keys_filename) == false) {
     Serial.println("Key file not present. Cancelling operation.");
     return;
   }
@@ -388,7 +395,7 @@ void checkKey() {
       add_mode = false;
       playUnauthorizedTone();
       return;
-    } else if (keypadBuffer.length() > 16) {
+    } else if (keypadBuffer.length() > 10) {
       Serial.println("Key too long - discarded");
       add_mode = false;
       playUnauthorizedTone();
@@ -493,6 +500,9 @@ void sd_setup() {
 // --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions ---
 
 void fatfs_setup() {
+  if (FORMAT_FFAT) {
+    FFat.format();
+  }  
   if(!FFat.begin(true)){
     Serial.println("FFAT filesystem mount failed");
     return;
@@ -1357,7 +1367,7 @@ void handleNotFound() {
   webServer.send(404, "text/plain", message);
 }
 
-// Download list of allowed keys (keys.txt)
+// Download list of allowed keys
 void downloadKeysHTTP() {
   int result = FFat_file_download(keys_filename);
   sendHTMLHeader();
@@ -1447,6 +1457,11 @@ void displayKeys() {
   }
   pageContent += F("</table>");
   keyFile.close();
+  pageContent += F("<form action='/addFormKey/' method='get'>");
+  pageContent += F("<input type='text' id='key' name='key' class='addKeyInput'></input>");
+  pageContent += F("<input type='submit' value='ADD' class='addKeyButton' required>");
+  pageContent += F("</form>");
+  
 }
 
 // Output config to serial
@@ -1764,6 +1779,9 @@ void siteHeader() {
   pageContent += F(".keyDelCell {height: 15px; width: 45px; background-color: #ff3200; color: black;}");
   pageContent += F(".keyDelCell:hover {height: 15px; width: 45px; background-color: #ef2200; color: black}");
   pageContent += F(".keyDelLink {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: black; text-decoration: none;}");
+  pageContent += F(".addKeyInput {height 17px; width: 245px;border: 1px solid #ff3200; font-family:Arial, Helvetica, sans-serif; font-size: 10px; color: black;}");
+  pageContent += F(".addKeyButton {height 30px; width: 49px; background-color: #ff3200; border: none; font-family:Arial, Helvetica, sans-serif; font-size: 10px; color: black; border: 1px solid #ff3200;}");
+  pageContent += F(".addKeyButton:hover {height 30px; width: 49px; background-color: #ef2200; border: none; font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: black; border: 1px solid #ff3200;}");
   pageContent += F("tr, td {border: 1px solid #ff3200;}");
   pageContent += F("button {width: 300px; background-color: #ff3200; border: none; text-decoration: none;}");
   pageContent += F("button:hover {width: 300px; background-color: #ef2200; border: none; text-decoration: none;}");
@@ -1782,21 +1800,29 @@ void siteHeader() {
 }
 
 void siteModes() {
+  int modeCount = 0;
   pageContent += F("<br/>");
   pageContent += F("<a class='smalltext'>");
   if (forceOffline) {
     pageContent += F(" [Forced Offline Mode] ");
+    modeCount++;
   }
   if (failSecure == false) {
     pageContent += F(" [Failsafe Mode] ");
+    modeCount++;
   }
   if (digitalRead(DS03) == LOW) {
     pageContent += F(" [Silent Mode] ");
+    modeCount++;
   }
   if (garage_mode) {
     pageContent += F(" [Garage Mode] ");
+    modeCount++;
   }
   pageContent += F("</a>");
+  if (modeCount > 0) {
+    pageContent += F("<br/>");
+  }
 }
 
 void siteButtons() {
@@ -1818,6 +1844,19 @@ void siteButtons() {
   pageContent += F("<br/>");
   pageContent += F("<a href='/restartESPHTTP'><button>Restart DL32</button></a>");
   pageContent += F("<br/> <br/>");
+ 
+  pageContent += F("<a class='header'>Config File</a>");
+  pageContent += F("<a href='/downloadConfigHTTP'><button>Download config file</button></a>");
+  pageContent += F("<br/>");
+  //pageContent += F("<a href='/outputConfig'><button>Output config to Serial</button></a>");
+  //pageContent += F("<br/>");
+  pageContent += F("<a href='/displayConfig'><button>Display config in page</button></a>");
+  pageContent += F("<br/>");
+  pageContent += F("<a href='/configSDtoFFatHTTP'><button>Upload config SD to DL32</button></a>");
+  pageContent += F("<br/>");
+  pageContent += F("<a href='/purgeConfigHTTP'><button>Purge configuration</button></a>");
+  pageContent += F("<br/><br/>");
+ 
   pageContent += F("<a class='header'>Key Management</a>");
   pageContent += F("<a href='/downloadKeysHTTP'><button>Download key file</button></a>");
   pageContent += F("<br/>");
@@ -1830,18 +1869,8 @@ void siteButtons() {
   pageContent += F("<a href='/addKeyModeHTTP'><button>Enter add key mode</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeKeysHTTP'><button>Purge stored keys</button></a>");
-  pageContent += F("<br/> <br/>");
-  pageContent += F("<a class='header'>Config File</a>");
-  pageContent += F("<a href='/downloadConfigHTTP'><button>Download config file</button></a>");
   pageContent += F("<br/>");
-  //pageContent += F("<a href='/outputConfig'><button>Output config to Serial</button></a>");
-  //pageContent += F("<br/>");
-  pageContent += F("<a href='/displayConfig'><button>Display config in page</button></a>");
-  pageContent += F("<br/>");
-  pageContent += F("<a href='/configSDtoFFatHTTP'><button>Upload config SD to DL32</button></a>");
-  pageContent += F("<br/>");
-  pageContent += F("<a href='/purgeConfigHTTP'><button>Purge configuration</button></a>");
-  pageContent += F("<br/>");
+
   //pageContent += F("<a class='header'>Filesystem Operations</a>");
   //pageContent += F("<a href='/outputFSHTTP'><button>Output FFat Contents to Serial</button></a>");
   //pageContent += F("<br/>");
@@ -1885,7 +1914,7 @@ void siteFooter() {
   pageContent += F("</body></html>");
 }
 
-void FunctionX() {
+void echoUri() {
   webServer.send(200, "text//plain", webServer.uri() );
 }
 
@@ -1920,17 +1949,30 @@ void startWebServer() {
     writeKey(webServer.pathArg(0));
     MainPage();
   });
-  webServer.on(UriRegex("/remKey/([0-9a-zA-Z]{4,8})"), HTTP_GET, [&]() {
+  webServer.on(UriRegex("/addKey/[?](1)key[=](1)([0-9a-zA-Z]{4,16})"), HTTP_GET, [&]() {
+    Serial.println(webServer.pathArg(0));
+    writeKey(webServer.pathArg(0));
+    MainPage();
+  });
+  webServer.on(UriRegex("/remKey/([0-9a-zA-Z]{3,16})"), HTTP_GET, [&]() {
     removeKey(webServer.pathArg(0));
     MainPage();
   });
-  webServer.on(UriRegex("/serial/([0-9a-zA-Z_-]{4,10})"), HTTP_GET, [&]() {
+  webServer.on(UriRegex("/serial/([0-9a-zA-Z_-]{3,10})"), HTTP_GET, [&]() {
     Serial.print("URL Command entered: ");
     Serial.print(webServer.pathArg(0));
     executeCommand(webServer.pathArg(0));
     MainPage();
   });
   webServer.on("/", MainPage);
+  webServer.on(UriRegex("/addFormKey/.{0,20}"), HTTP_GET, [&]() {
+    Serial.print("Writing key ");
+    Serial.print(webServer.arg("key"));
+    Serial.println(" from webUI input.");
+    writeKey(webServer.arg("key"));
+    MainPage();
+  });
+
   webServer.begin();
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("Web Server started at http://");
@@ -1943,6 +1985,7 @@ void startWebServer() {
 void setup() {
   delay(500);
   Serial.begin(115200);
+  delay(500);
   Serial.println("Initializing WDT...");
   secondTick.attach(1, ISRwatchdog);
   fatfs_setup();
@@ -2039,7 +2082,7 @@ void loop() {
       disconCount = 0;
     } else {
       //Future - trannsition to millis and use lastWifiConnectAttempt
-      if (disconCount > 10000) {
+      if (disconCount > 100000) {
         disconCount = 0;
         Serial.println("WiFi reconnection attempt...");
          connectWifi();
