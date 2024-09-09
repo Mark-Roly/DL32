@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 08/09/2024
+  Last updated 09/09/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -12,10 +12,10 @@
     CPU frequency: 240Mhz (WiFi)
     USB DFU on boot: Disabled
     USB Firmware MSC on boot: Disabled
-    Partition Scheme: Default 4mb with ffat
+    Partition Scheme: Custom (partitions.csv provided on Github)
     Upload Mode: UART0/Hardware CDC
     Upload speed: 921600
-    USB Mode: Hardware CDC and JTAG    
+    USB Mode: Hardware CDC and JTAG   
   
   DIP Switch settings:
     DS01 = Offline mode
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240908
+#define codeVersion 20240909
 
 // Include Libraries
 #include <Arduino.h>
@@ -45,7 +45,8 @@
 #include <LittleFS.h>
 #include <Ticker.h>
 #include <uri/UriRegex.h>
-#include <uptime_formatter.h>
+#include <uptime_formatter.h>   // Uptime-Library by YiannisBourkelis https://github.com/YiannisBourkelis/Uptime-Library
+#include <ElegantOTA.h>         // ElegantOTA by yushsharma82 https://github.com/ayushsharma82/ElegantOTA
 #include <FS.h>
 #include <FFat.h>
 #include <SD.h>
@@ -141,6 +142,10 @@ int freq = 2000;
 int channel = 0;
 int resolution = 8;
 
+
+// OTA
+unsigned long ota_progress_millis = 0;
+
 // integer for watchdog counter
 volatile int watchdogCount = 0;
 
@@ -162,6 +167,32 @@ void ISRwatchdog() {
     Serial.println("Watchdog invoked!");
     ESP.restart();
   }
+}
+
+// --- OTA
+
+void onOTAStart() {
+  // Log when OTA has started
+  Serial.println("OTA update started!");
+  // <Add your own code here>
+}
+
+void onOTAProgress(size_t current, size_t final) {
+  // Log every 1 second
+  if (millis() - ota_progress_millis > 1000) {
+    ota_progress_millis = millis();
+    Serial.printf("OTA Progress Current: %u bytes, Final: %u bytes\n", current, final);
+  }
+}
+
+void onOTAEnd(bool success) {
+  // Log when OTA has finished
+  if (success) {
+    Serial.println("OTA update finished successfully!");
+  } else {
+    Serial.println("There was an error during OTA update!");
+  }
+  // <Add your own code here>
 }
 
 // --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime 
@@ -1004,6 +1035,7 @@ void checkAUX() {
     }
     if (count > 499) {
       setPixPurple();
+      Serial.println("Release button now to upload config (SD->FFAT)");
       playUploadTone();
     }
     while ((digitalRead(AUXButton_pin) == LOW) && (count < 1000)) {
@@ -1012,6 +1044,7 @@ void checkAUX() {
     }
     if (count > 999) {
       setPixAmber();
+      Serial.println("Release button now to wipe authorized keys list.)");
       playPurgeTone();
     }
     while (digitalRead(AUXButton_pin) == LOW && (count < 1500)) {
@@ -1020,6 +1053,7 @@ void checkAUX() {
     }
     if (count > 1499) {
       setPixRed();
+      Serial.println("Release button now to perform factory reset.)");
       playFactoryTone();
     }
     
@@ -1845,7 +1879,7 @@ void siteButtons() {
   pageContent += F("<a href='/restartESPHTTP'><button>Restart DL32</button></a>");
   pageContent += F("<br/> <br/>");
  
-  pageContent += F("<a class='header'>Config File</a>");
+  pageContent += F("<a class='header'>System</a>");
   pageContent += F("<a href='/downloadConfigHTTP'><button>Download config file</button></a>");
   pageContent += F("<br/>");
   //pageContent += F("<a href='/outputConfig'><button>Output config to Serial</button></a>");
@@ -1855,8 +1889,10 @@ void siteButtons() {
   pageContent += F("<a href='/configSDtoFFatHTTP'><button>Upload config SD to DL32</button></a>");
   pageContent += F("<br/>");
   pageContent += F("<a href='/purgeConfigHTTP'><button>Purge configuration</button></a>");
+  pageContent += F("<br/>");
+  pageContent += F("<a href='/update'><button>Update firmware</button></a>");
   pageContent += F("<br/><br/>");
- 
+
   pageContent += F("<a class='header'>Key Management</a>");
   pageContent += F("<a href='/downloadKeysHTTP'><button>Download key file</button></a>");
   pageContent += F("<br/>");
@@ -1973,6 +2009,12 @@ void startWebServer() {
     MainPage();
   });
 
+  ElegantOTA.begin(&webServer);    // Start ElegantOTA
+  // ElegantOTA callbacks
+  ElegantOTA.onStart(onOTAStart);
+  ElegantOTA.onProgress(onOTAProgress);
+  ElegantOTA.onEnd(onOTAEnd);
+
   webServer.begin();
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("Web Server started at http://");
@@ -2075,6 +2117,7 @@ void loop() {
       }
       //Online Functions
       webServer.handleClient();
+      ElegantOTA.loop();
       if (strcmp(config.mqtt_enabled, "true") == 0) {
         maintainConnnectionMQTT();
         checkMqtt();
