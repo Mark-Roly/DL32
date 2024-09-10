@@ -2,11 +2,11 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 09/09/2024
+  Last updated 10/09/2024
 
   https://github.com/Mark-Roly/DL32/
 
-  Board Profile: LOLIN S3 Mini
+  Board Profile: ESP32S3 Dev Module
   Upload settings:
     USB CDC on Boot: Enabled
     CPU frequency: 240Mhz (WiFi)
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240909
+#define codeVersion 20240910
 
 // Include Libraries
 #include <Arduino.h>
@@ -104,7 +104,7 @@ struct Config {
 #define keyDur 5
 #define garageDur 500
 #define addKeyDur 10
-#define unrecognizedKeyDur 2
+#define unrecognizedKeyDur 4
 #define WDT_TIMEOUT 60
 
 // Number of neopixels used
@@ -121,6 +121,8 @@ int value = 0;
 int add_count = 0;
 String scannedKey = "";
 String serialCmd;
+
+unsigned long ota_progress_millis = 0;
 
 boolean validKeyRead = false;
 boolean forceOffline = false;
@@ -141,10 +143,6 @@ const char* keys_filename = "/keys.txt";
 int freq = 2000;
 int channel = 0;
 int resolution = 8;
-
-
-// OTA
-unsigned long ota_progress_millis = 0;
 
 // integer for watchdog counter
 volatile int watchdogCount = 0;
@@ -169,7 +167,7 @@ void ISRwatchdog() {
   }
 }
 
-// --- OTA
+// --- OTA Functions --- OTA Functions --- OTA Functions --- OTA Functions --- OTA Functions --- OTA Functions --- OTA Functions ---
 
 void onOTAStart() {
   // Log when OTA has started
@@ -195,7 +193,7 @@ void onOTAEnd(bool success) {
   // <Add your own code here>
 }
 
-// --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime --- Uptime 
+// --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions ---
 
 
 void publishUptime() {
@@ -1117,6 +1115,12 @@ void checkMagSensor() {
 
 // --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions ---
 
+void playNote(note_t note, int octave, int dur) {
+  ledcWriteNote(buzzer_pin, note, octave);
+  delay(dur*100);
+  ledcWriteTone(buzzer_pin, 0);
+}
+
 void playBipTone() {
   if (digitalRead(DS03) == HIGH) {
     ledcWriteTone(buzzer_pin, 100);
@@ -1199,6 +1203,257 @@ void playSuccessTone() {
 }
 
 void ringBell() {
+  playGreensleves();
+}
+
+void playBowserTheme() {
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Eb, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Eb, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_Fs, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_Eb, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_Fs, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_Eb, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Eb, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Eb, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_G, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_D, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_Cs, 6, 1);
+  playNote(NOTE_Fs, 5, 1);
+  playNote(NOTE_C, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_Fs, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_Eb, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_Fs, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_F, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_Eb, 6, 1);
+  playNote(NOTE_Bb, 5, 1);
+  playNote(NOTE_E, 6, 1);
+}
+
+void playGreensleves() {
+  playNote(NOTE_A, 4, 4);
+  playNote(NOTE_C, 5, 8);
+  playNote(NOTE_D, 5, 4);
+  playNote(NOTE_E, 5, 6);
+  playNote(NOTE_F, 5, 2);
+  playNote(NOTE_E, 5, 4);
+  playNote(NOTE_D, 5, 8);
+  playNote(NOTE_B, 4, 4);
+  playNote(NOTE_G, 4, 6);
+  playNote(NOTE_A, 4, 2);
+  playNote(NOTE_B, 4, 4);
+  playNote(NOTE_C, 5, 8);
+  playNote(NOTE_A, 4, 4);
+  playNote(NOTE_A, 4, 6);
+  playNote(NOTE_Gs, 4, 2);
+  playNote(NOTE_A, 4, 4);
+  playNote(NOTE_B, 4, 8);
+  playNote(NOTE_Gs, 4, 4);
+  playNote(NOTE_E, 4, 8);
+  playNote(NOTE_A, 4, 4);
+  playNote(NOTE_C, 5, 8);
+  playNote(NOTE_D, 5, 4);
+  playNote(NOTE_E, 5, 6);
+  playNote(NOTE_F, 5, 2);
+  playNote(NOTE_E, 5, 4);
+  playNote(NOTE_D, 5, 8);
+  playNote(NOTE_B, 4, 4);
+  playNote(NOTE_G, 4, 6);
+  playNote(NOTE_A, 4, 2);
+  playNote(NOTE_B, 4, 4);
+  playNote(NOTE_C, 5, 6);
+  playNote(NOTE_B, 4, 2);
+  playNote(NOTE_A, 4, 4);
+  playNote(NOTE_Gs, 4, 6);
+  playNote(NOTE_Fs, 4, 2);
+  playNote(NOTE_Gs, 4, 4);
+  playNote(NOTE_A, 4, 20);
+}
+
+void playGeigerTone() {
+  for (int h=1; h<5; h++) {
+    ledcWrite(buzzer_pin, 0);
+    for (int i=1; i<20; i++) {
+      ledcWriteTone(buzzer_pin, i * 100);
+      delay(10);    
+    }
+    ledcWrite(buzzer_pin, 0);
+    delay(1000);
+  }
+}
+
+void playRandomTone() {
   if (digitalRead(DS03) == HIGH) {
     Serial.println("Ringing bell");
     for (int i = 0; i <= 3; i++) {
@@ -2009,7 +2264,7 @@ void startWebServer() {
     MainPage();
   });
 
-  ElegantOTA.begin(&webServer);    // Start ElegantOTA
+  ElegantOTA.begin(&webServer); // Start ElegantOTA
   // ElegantOTA callbacks
   ElegantOTA.onStart(onOTAStart);
   ElegantOTA.onProgress(onOTAProgress);
