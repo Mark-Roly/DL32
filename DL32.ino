@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 10/09/2024
+  Last updated 11/09/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 20240910
+#define codeVersion 2024091
 
 // Include Libraries
 #include <Arduino.h>
@@ -285,7 +285,6 @@ void writeKey(String key) {
     Serial.println(" to authorized list");
     playSuccessTone();
   }
-
 }
 
 void removeKey(String key) {
@@ -1115,10 +1114,15 @@ void checkMagSensor() {
 
 // --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions --- Buzzer Functions ---
 
-void playNote(note_t note, int octave, int dur) {
-  ledcWriteNote(buzzer_pin, note, octave);
-  delay(dur*100);
-  ledcWriteTone(buzzer_pin, 0);
+boolean playNote(note_t note, int octave, int dur) {
+  if ((digitalRead(exitButton_pin) == LOW)) {
+    return true;
+  } else {
+    ledcWriteNote(buzzer_pin, note, octave);
+    delay(dur*100);
+    ledcWriteTone(buzzer_pin, 0);
+    return false;
+  }
 }
 
 void playBipTone() {
@@ -1207,238 +1211,238 @@ void ringBell() {
 }
 
 void playBowserTheme() {
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Eb, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Eb, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_Fs, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_Eb, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_Fs, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_Eb, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Eb, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Eb, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_G, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_D, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_Cs, 6, 1);
-  playNote(NOTE_Fs, 5, 1);
-  playNote(NOTE_C, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_Fs, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_Eb, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_Fs, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_F, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_Eb, 6, 1);
-  playNote(NOTE_Bb, 5, 1);
-  playNote(NOTE_E, 6, 1);
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Eb, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Eb, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_Fs, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_Eb, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_Fs, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_Eb, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Eb, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Eb, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_G, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_D, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_Cs, 6, 1)) return;
+  if (playNote(NOTE_Fs, 5, 1)) return;
+  if (playNote(NOTE_C, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_Fs, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_Eb, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_Fs, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_F, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_Eb, 6, 1)) return;
+  if (playNote(NOTE_Bb, 5, 1)) return;
+  if (playNote(NOTE_E, 6, 1)) return;
 }
 
 void playGreensleves() {
-  playNote(NOTE_A, 4, 4);
-  playNote(NOTE_C, 5, 8);
-  playNote(NOTE_D, 5, 4);
-  playNote(NOTE_E, 5, 6);
-  playNote(NOTE_F, 5, 2);
-  playNote(NOTE_E, 5, 4);
-  playNote(NOTE_D, 5, 8);
-  playNote(NOTE_B, 4, 4);
-  playNote(NOTE_G, 4, 6);
-  playNote(NOTE_A, 4, 2);
-  playNote(NOTE_B, 4, 4);
-  playNote(NOTE_C, 5, 8);
-  playNote(NOTE_A, 4, 4);
-  playNote(NOTE_A, 4, 6);
-  playNote(NOTE_Gs, 4, 2);
-  playNote(NOTE_A, 4, 4);
-  playNote(NOTE_B, 4, 8);
-  playNote(NOTE_Gs, 4, 4);
-  playNote(NOTE_E, 4, 8);
-  playNote(NOTE_A, 4, 4);
-  playNote(NOTE_C, 5, 8);
-  playNote(NOTE_D, 5, 4);
-  playNote(NOTE_E, 5, 6);
-  playNote(NOTE_F, 5, 2);
-  playNote(NOTE_E, 5, 4);
-  playNote(NOTE_D, 5, 8);
-  playNote(NOTE_B, 4, 4);
-  playNote(NOTE_G, 4, 6);
-  playNote(NOTE_A, 4, 2);
-  playNote(NOTE_B, 4, 4);
-  playNote(NOTE_C, 5, 6);
-  playNote(NOTE_B, 4, 2);
-  playNote(NOTE_A, 4, 4);
-  playNote(NOTE_Gs, 4, 6);
-  playNote(NOTE_Fs, 4, 2);
-  playNote(NOTE_Gs, 4, 4);
-  playNote(NOTE_A, 4, 20);
+  if (playNote(NOTE_A, 4, 4)) return;
+  if (playNote(NOTE_C, 5, 8)) return;
+  if (playNote(NOTE_D, 5, 4)) return;
+  if (playNote(NOTE_E, 5, 6)) return;
+  if (playNote(NOTE_F, 5, 2)) return;
+  if (playNote(NOTE_E, 5, 4)) return;
+  if (playNote(NOTE_D, 5, 8)) return;
+  if (playNote(NOTE_B, 4, 4)) return;
+  if (playNote(NOTE_G, 4, 6)) return;
+  if (playNote(NOTE_A, 4, 2)) return;
+  if (playNote(NOTE_B, 4, 4)) return;
+  if (playNote(NOTE_C, 5, 8)) return;
+  if (playNote(NOTE_A, 4, 4)) return;
+  if (playNote(NOTE_A, 4, 6)) return;
+  if (playNote(NOTE_Gs, 4, 2)) return;
+  if (playNote(NOTE_A, 4, 4)) return;
+  if (playNote(NOTE_B, 4, 8)) return;
+  if (playNote(NOTE_Gs, 4, 4)) return;
+  if (playNote(NOTE_E, 4, 8)) return;
+  if (playNote(NOTE_A, 4, 4)) return;
+  if (playNote(NOTE_C, 5, 8)) return;
+  if (playNote(NOTE_D, 5, 4)) return;
+  if (playNote(NOTE_E, 5, 6)) return;
+  if (playNote(NOTE_F, 5, 2)) return;
+  if (playNote(NOTE_E, 5, 4)) return;
+  if (playNote(NOTE_D, 5, 8)) return;
+  if (playNote(NOTE_B, 4, 4)) return;
+  if (playNote(NOTE_G, 4, 6)) return;
+  if (playNote(NOTE_A, 4, 2)) return;
+  if (playNote(NOTE_B, 4, 4)) return;
+  if (playNote(NOTE_C, 5, 6)) return;
+  if (playNote(NOTE_B, 4, 2)) return;
+  if (playNote(NOTE_A, 4, 4)) return;
+  if (playNote(NOTE_Gs, 4, 6)) return;
+  if (playNote(NOTE_Fs, 4, 2)) return;
+  if (playNote(NOTE_Gs, 4, 4)) return;
+  if (playNote(NOTE_A, 4, 20)) return;
 }
 
 void playGeigerTone() {
@@ -1899,9 +1903,9 @@ int FFat_file_download(String filename) {
 }
 
 void ringBellHTTP() {
-  ringBell();
   webServer.sendHeader("Location", "/",true);
   webServer.send(302, "text/plain", "");
+  ringBell();
 }
 
 void displayAddressingHTTP() {
