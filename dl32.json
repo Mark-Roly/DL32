@@ -1,12 +1,13 @@
 {
-    "ssid": "ssample_ssid",
-    "wifi_password": "sample_wifi_password",
-    "mqtt_enabled": "true",
+	"wifi_enabled": "false",
+    "wifi_ssid": "sample_wifi_ssid",
+    "wifi_password": "sample_wifi_pass",
+    "mqtt_enabled": "false",
     "mqtt_server": "192.168.1.111",
     "mqtt_port": "1883",
     "mqtt_topic": "DL32S3",
     "mqtt_client_name": "DL32S3",
     "mqtt_auth": "true",
     "mqtt_user": "sample_mqtt_user",
-    "mqtt_password": "sample_mqtt_password"
+    "mqtt_password": "sample_mqtt_pass"
 }

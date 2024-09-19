@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 11/09/2024
+  Last updated 19/09/2024
 
   https://github.com/Mark-Roly/DL32/
 
@@ -31,7 +31,7 @@
 
 */
 
-#define codeVersion 2024091
+#define codeVersion 20240919
 
 // Include Libraries
 #include <Arduino.h>
@@ -80,7 +80,8 @@
 
 // Define struct for storing configuration
 struct Config {
-  char ssid[32];
+  char wifi_enabled[8];
+  char wifi_ssid[32];
   char wifi_password[32];
   char mqtt_enabled[8];
   char mqtt_server[32];
@@ -661,13 +662,13 @@ void loadFSJSON(const char* config_filename, Config& config) {
   if (error) {
     Serial.println(F("Failed to read file, using default configuration"));
   }
-  strlcpy(config.ssid, doc["ssid"] | "null_ssid", sizeof(config.ssid));
-  strlcpy(config.wifi_password, doc["wifi_password"] | "null_wifi_password", sizeof(config.wifi_password));
+  strlcpy(config.wifi_enabled, doc["wifi_enabled"] | "false", sizeof(config.wifi_enabled));
+  strlcpy(config.wifi_ssid, doc["wifi_ssid"] | "null_wifi_ssid", sizeof(config.wifi_ssid));
+  strlcpy(config.wifi_password, doc["wifi_password"] | "null_wifi_pass", sizeof(config.wifi_password));
   strlcpy(config.mqtt_enabled, doc["mqtt_enabled"] | "false", sizeof(config.mqtt_enabled));
   strlcpy(config.mqtt_server, doc["mqtt_server"] | "null_mqtt_server", sizeof(config.mqtt_server));
   strlcpy(config.mqtt_port, doc["mqtt_port"] | "1883", sizeof(config.mqtt_port));
   strlcpy(config.mqtt_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_topic));
-  
   strlcpy(config.mqtt_stat_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_stat_topic));
   strlcpy(config.mqtt_cmnd_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_cmnd_topic));
   strlcpy(config.mqtt_keys_topic, doc["mqtt_topic"] | "DEFAULT_dl32s3", sizeof(config.mqtt_keys_topic));
@@ -678,11 +679,10 @@ void loadFSJSON(const char* config_filename, Config& config) {
   strcat(config.mqtt_keys_topic, "/keys");
   strcat(config.mqtt_addr_topic, "/addr");
   strcat(config.mqtt_uptm_topic, "/uptm");
-  
   strlcpy(config.mqtt_client_name, doc["mqtt_client_name"] | "DEFAULT_dl32s3", sizeof(config.mqtt_client_name));
   strlcpy(config.mqtt_auth, doc["mqtt_auth"] | "true", sizeof(config.mqtt_auth));
   strlcpy(config.mqtt_user, doc["mqtt_user"] | "mqtt", sizeof(config.mqtt_user));
-  strlcpy(config.mqtt_password, doc["mqtt_password"] | "null_mqtt_password", sizeof(config.mqtt_password));
+  strlcpy(config.mqtt_password, doc["mqtt_password"] | "null_mqtt_pass", sizeof(config.mqtt_password));
   file.close();
 }
 
@@ -836,11 +836,11 @@ void setPixBlue() {
 int connectWifi() {
 
   WiFi.mode(WIFI_STA); //Optional
-  Serial.print("Connecting to SSID " + (String)config.ssid);
+  Serial.print("Connecting to SSID " + (String)config.wifi_ssid);
   //Serial.print(" with password ");
   //Serial.print(config.wifi_password);
   int count = 0;
-  WiFi.begin(config.ssid, config.wifi_password);
+  WiFi.begin(config.wifi_ssid, config.wifi_password);
   
   while(WiFi.status() != WL_CONNECTED){
     Serial.print(".");
@@ -848,13 +848,13 @@ int connectWifi() {
     count++;
     if (count > 10) {
       Serial.print("Unable to connect to SSID ");
-      Serial.println(config.ssid);
+      Serial.println(config.wifi_ssid);
       WiFi.disconnect();
       return 1;
     }    
   }
-  Serial.print("\nConnected to SSID ");
-  Serial.println(config.ssid);
+  Serial.print("\nSuccessfully connected to SSID ");
+  Serial.println(config.wifi_ssid);
   if (strcmp(config.mqtt_enabled, "true") == 0) {
     startMQTTConnection();
   }
@@ -2311,6 +2311,10 @@ void setup() {
   pinMode(DS04, INPUT_PULLUP);
   digitalWrite(buzzer_pin, LOW);
 
+  // Should load default config if run for the first time
+  Serial.println(F("Loading configuration..."));
+  loadFSJSON(config_filename, config);
+
   // Check Dip Switch states
   if (digitalRead(DS01) == LOW) {
     Serial.print("DIP Switch #1 ON");
@@ -2331,16 +2335,17 @@ void setup() {
     Serial.println(" - Garage mode");
     garage_mode = true;
   }
+  if (strcmp(config.wifi_enabled, "false") == 0) {
+    Serial.print("Wifi disabled");
+    Serial.println(" - Forced offline mode");
+    forceOffline = true;
+  }
 
   if (failSecure) {
     digitalWrite(lockRelay_pin, LOW);
   } else {
     digitalWrite(lockRelay_pin, HIGH);
   }
-
-  // Should load default config if run for the first time
-  Serial.println(F("Loading configuration..."));
-  loadFSJSON(config_filename, config);
 
   if (forceOffline == false) {
     connectWifi();
@@ -2363,6 +2368,7 @@ void setup() {
   pinStateChanged();
   ledcAttachChannel(buzzer_pin, freq, resolution, channel);
   setPixBlue();
+  Serial.println("Ready.");
 }
 
 // --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP --- LOOP ---
