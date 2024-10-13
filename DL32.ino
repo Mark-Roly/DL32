@@ -2,8 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 19/09/2024
-
+  Last updated 13/10/2024
   https://github.com/Mark-Roly/DL32/
 
   Board Profile: ESP32S3 Dev Module
@@ -31,7 +30,7 @@
 
 */
 
-#define codeVersion 20240919
+#define codeVersion 20241013
 
 // Include Libraries
 #include <Arduino.h>
@@ -40,7 +39,7 @@
 #include <Adafruit_NeoPixel.h>
 #include <WebServer.h>
 #include <SPI.h>
-#include <Wiegand.h>
+#include <Wiegand.h>            // YetAnotherArduinoWiegandLibrary by paula-raca https://github.com/paulo-raca/YetAnotherArduinoWiegandLibrary
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Ticker.h>
@@ -98,7 +97,6 @@ struct Config {
   char mqtt_password[32];
 };
 
-// Durations for each unlock type (eg: unlock for 10 seconds if unlocked via MQTT)
 #define exitButDur 5
 #define httpDur 5
 #define keypadDur 15 //tenths-of-seconds
@@ -120,6 +118,7 @@ long lastWifiConnectAttempt = 0;
 char msg[50];
 int value = 0;
 int add_count = 0;
+int seqTmr = 0;
 String scannedKey = "";
 String serialCmd;
 
@@ -195,7 +194,6 @@ void onOTAEnd(bool success) {
 }
 
 // --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions ---
-
 
 void publishUptime() {
   if (MQTTclient.connected()) {
@@ -778,7 +776,8 @@ void addKeyMode() {
     wiegand.flush();
     interrupts();
     if (add_count % 100 == 0) {
-      playBipTone();
+      //playBipTone();
+      playGeigerTone();
     }
     if (Serial.available()) {
       serialCmd = Serial.readStringUntil('\n');
@@ -851,7 +850,7 @@ int connectWifi() {
       Serial.println(config.wifi_ssid);
       WiFi.disconnect();
       return 1;
-    }    
+    }
   }
   Serial.print("\nSuccessfully connected to SSID ");
   Serial.println(config.wifi_ssid);
@@ -990,9 +989,14 @@ int checkExit() {
       }
     }
     if (count > 5 && count < 501){
-      Serial.println("Exit Button Pressed");
+      Serial.print("Exit Button pressed for ");
+      Serial.print(count);
+      Serial.println(" centiseconds");
       if (MQTTclient.connected()) {
-        mqttPublish(config.mqtt_stat_topic, "button pressed");
+        String msg_str = ("Exit Button pressed for " + String(count) + " centiseconds");
+        char* msg_char = new char[msg_str.length() + 1];
+        msg_str.toCharArray(msg_char, msg_str.length() + 1);
+        mqttPublish(config.mqtt_stat_topic, msg_char);
       }
       unlock(exitButDur);
       return 0;
@@ -1208,6 +1212,50 @@ void playSuccessTone() {
 
 void ringBell() {
   playGreensleves();
+}
+
+//bleh - not working, fix later
+boolean playSeq(int noteBeg, note_t note, int octave, int dur) {
+  if ((digitalRead(exitButton_pin) == LOW)) {
+    seqTmr = 0;
+    return true;
+  } else if (noteBeg == seqTmr) {
+
+    Serial.print("noteBeg = ");
+    Serial.print(noteBeg);
+    Serial.print("   seqTmr = ");
+    Serial.println(seqTmr);
+
+    int loopTmr = seqTmr;
+    Serial.print("time to play ");
+    Serial.print(note);
+    Serial.print(" for ");
+    Serial.println(dur);
+    while (seqTmr < (loopTmr+dur)) {
+      Serial.print(seqTmr);
+      Serial.print(" should be less than ");
+      Serial.println(loopTmr + dur);
+      ledcWriteNote(buzzer_pin, note, octave);
+      delay(dur * 10);
+      ledcWriteTone(buzzer_pin, 0);
+      seqTmr = (seqTmr + dur);
+    }
+  } else {
+  Serial.print(seqTmr);
+  Serial.println(" is not a time to play a note, incrementing");
+  delay(10);
+  seqTmr++;
+  return false;
+  }
+}
+
+void playTwinkle() {
+  seqTmr = 0;
+  playSeq(0,NOTE_C,5,26);
+  playSeq(4,NOTE_C,5,26);
+  playSeq(8,NOTE_G,5,26);
+  playSeq(12,NOTE_G,5,26);
+  playSeq(16,NOTE_A,5,26);
 }
 
 void playBowserTheme() {
@@ -1446,15 +1494,12 @@ void playGreensleves() {
 }
 
 void playGeigerTone() {
-  for (int h=1; h<5; h++) {
-    ledcWrite(buzzer_pin, 0);
-    for (int i=1; i<20; i++) {
-      ledcWriteTone(buzzer_pin, i * 100);
-      delay(10);    
-    }
-    ledcWrite(buzzer_pin, 0);
-    delay(1000);
+  ledcWrite(buzzer_pin, 0);
+  for (int i=1; i<20; i++) {
+    ledcWriteTone(buzzer_pin, i * 100);
+    delay(10);    
   }
+  ledcWrite(buzzer_pin, 0);
 }
 
 void playRandomTone() {
@@ -2066,11 +2111,11 @@ void siteHeader() {
   //Orange Theme
   pageContent += F("div {width: 350px; margin: 20px auto; text-align: center; border: 3px solid #ff3200; background-color: #555555; left: auto; right: auto;}");
   pageContent += F(".header {font-family: Arial, Helvetica, sans-serif; font-size: 20px; color: #ff3200;}");
-  pageContent += F(".smalltext {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #ff3200;}");
+  pageContent += F(".smalltext {font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #ff3200;}");
   pageContent += F(".keyTable {background-color: #303030; font-size: 11px; width: 300px; resize: vertical; margin-left: auto; margin-right: auto; border: 1px solid #ff3200; border-collapse: collapse;}");
   pageContent += F(".keyCell {height: 15px; color: #ff3200;}");
   pageContent += F(".keyDelCell {height: 15px; width: 45px; background-color: #ff3200; color: black;}");
-  pageContent += F(".keyDelCell:hover {height: 15px; width: 45px; background-color: #ef2200; color: black}");
+  pageContent += F(".keyDelCell:hover {height: 15px; width: 45px; background-color: #ef2200; color: black; border: 1px solid #000000}");
   pageContent += F(".keyDelLink {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: black; text-decoration: none;}");
   pageContent += F(".addKeyInput {height 17px; width: 245px;border: 1px solid #ff3200; font-family:Arial, Helvetica, sans-serif; font-size: 10px; color: black;}");
   pageContent += F(".addKeyButton {height 30px; width: 49px; background-color: #ff3200; border: none; font-family:Arial, Helvetica, sans-serif; font-size: 10px; color: black; border: 1px solid #ff3200;}");
@@ -2196,11 +2241,11 @@ void siteFooter() {
   pageContent += F("IP: ");
   pageContent += (String(ip_addr[0]) + "." + String(ip_addr[1]) + "." + String(ip_addr[2]) + "." + String(ip_addr[3]));
   pageContent += F("</a>");
-  pageContent += F("&nbsp;&nbsp;");
+  pageContent += F("&nbsp;&nbsp;&nbsp;&nbsp;");
   pageContent += F("<a class='smalltext'>");
   pageContent += F("ver: ");
   pageContent += (String(codeVersion));
-  pageContent += F("&nbsp;&nbsp;");
+  pageContent += F("&nbsp;&nbsp;&nbsp;&nbsp;");
   pageContent += F("</a>");
   pageContent += F("<a class='smalltext' href='https://github.com/Mark-Roly/DL32' target='_blank' rel='noopener noreferrer'>");
   pageContent += F("github");
