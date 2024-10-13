@@ -2105,7 +2105,8 @@ void sendHTMLStop() {
 void siteHeader() {
   pageContent  = F("<!DOCTYPE html>");
   pageContent += F("<html>");
-  pageContent += F("<head>");
+  pageContent += F("<head >");
+  pageContent += F("<meta name='viewport' content='width=device-width, initial-scale=1'>");
   pageContent += F("<style>");
 
   //Orange Theme
@@ -2128,7 +2129,6 @@ void siteHeader() {
   pageContent += F("a {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #ff3200;}");
   pageContent += F("textarea {background-color: #303030; font-size: 11px; width: 300px; height: 150px; resize: vertical; color: #ff3200;}");
   pageContent += F("body {background-color: #303030; text-align: center;}");
-
   pageContent += F("</style>");
   pageContent += F("</head>");
   pageContent += F("<body><div><h1>DL32 MENU</h1>");
