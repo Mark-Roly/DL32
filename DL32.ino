@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 13/10/2024
+  Last updated 07/12/2024
   https://github.com/Mark-Roly/DL32/
 
   Board Profile: ESP32S3 Dev Module
@@ -30,7 +30,7 @@
 
 */
 
-#define codeVersion 20241013
+#define codeVersion 20241207
 
 // Include Libraries
 #include <Arduino.h>
@@ -40,7 +40,7 @@
 #include <WebServer.h>
 #include <SPI.h>
 #include <Wiegand.h>            // YetAnotherArduinoWiegandLibrary by paula-raca https://github.com/paulo-raca/YetAnotherArduinoWiegandLibrary
-#include <ArduinoJson.h>
+#include <ArduinoJson.h>        // ArduinoJSON by Benoit Blanchon https://arduinojson.org/?utm_source=meta&utm_medium=library.properties
 #include <LittleFS.h>
 #include <Ticker.h>
 #include <uri/UriRegex.h>
@@ -111,10 +111,12 @@ struct Config {
 
 #define FORMAT_FFAT false
 
-long lastMsg = 0;
-long disconCount = 0;
-long lastMQTTConnectAttempt = 0;
-long lastWifiConnectAttempt = 0;
+unsigned long lastMsg = 0;
+unsigned long disconCount = 0;
+unsigned long lastMQTTConnectAttempt = 0;
+unsigned long lastWifiConnectAttempt = 0;
+unsigned long wifiReconnectInterval = 60000;
+unsigned long mqttReconnectInterval = 60000;
 char msg[50];
 int value = 0;
 int add_count = 0;
@@ -478,7 +480,7 @@ void stateChanged(bool plugged, const char* message) {
   Serial.println(plugged ? "CONNECTED" : "DISCONNECTED");
 }
 
-// IRQ function for read cards
+// IRQ function for reading cards
 void receivedData(uint8_t* data, uint8_t bits, const char* message) {
   String key = "";
   String key_buff = "";
@@ -839,6 +841,7 @@ int connectWifi() {
   //Serial.print(" with password ");
   //Serial.print(config.wifi_password);
   int count = 0;
+  lastWifiConnectAttempt = millis();
   WiFi.begin(config.wifi_ssid, config.wifi_password);
   
   while(WiFi.status() != WL_CONNECTED){
@@ -989,11 +992,13 @@ int checkExit() {
       }
     }
     if (count > 5 && count < 501){
-      Serial.print("Exit Button pressed for ");
-      Serial.print(count);
-      Serial.println(" centiseconds");
+      Serial.print("Exit Button pressed");
+      // Serial.print(" for ");
+      // Serial.print(count);
+      // Serial.print(" centiseconds");
+      Serial.println("");
       if (MQTTclient.connected()) {
-        String msg_str = ("Exit Button pressed for " + String(count) + " centiseconds");
+        String msg_str = ("Exit Button pressed"); // for " + String(count) + " centiseconds");
         char* msg_char = new char[msg_str.length() + 1];
         msg_str.toCharArray(msg_char, msg_str.length() + 1);
         mqttPublish(config.mqtt_stat_topic, msg_char);
@@ -1214,7 +1219,7 @@ void ringBell() {
   playGreensleves();
 }
 
-//bleh - not working, fix later
+//todo - not working, fix later
 boolean playSeq(int noteBeg, note_t note, int octave, int dur) {
   if ((digitalRead(exitButton_pin) == LOW)) {
     seqTmr = 0;
@@ -1529,7 +1534,7 @@ void startMQTTConnection() {
   if (MQTTclient.connected()) {
     MQTTclient.publish(config.mqtt_stat_topic, "locked", true);
   }
-  lastMQTTConnectAttempt = 0;
+  lastMQTTConnectAttempt = millis();
 }
 
 void MQTTcallback(char* topic, byte* payload, unsigned int length) {
@@ -1547,10 +1552,12 @@ void MQTTcallback(char* topic, byte* payload, unsigned int length) {
 
 void maintainConnnectionMQTT() {
   if (!MQTTclient.connected()) {
-    long now = millis();
-    if (now - lastMQTTConnectAttempt > 60000) {
-      lastMQTTConnectAttempt = now;
+    if (millis() - lastMQTTConnectAttempt > mqttReconnectInterval) {
+      lastMQTTConnectAttempt = millis();
       // Attempt to reconnect
+      Serial.print("Attempting reconnection to MQTT broker ");
+      Serial.print(config.mqtt_server);
+      Serial.println("... ");
       mqttConnect();
     }
   }
@@ -1560,9 +1567,6 @@ boolean mqttConnect() {
   if ((!strcmp(config.mqtt_enabled, "true") == 0 || (WiFi.status() != WL_CONNECTED))) {
     return false;
   }
-  Serial.print("Attempting connection to MQTT broker ");
-  Serial.print(config.mqtt_server);
-  Serial.println("... ");
   if (strcmp(config.mqtt_auth, "true") == 0) {
     if (MQTTclient.connect(config.mqtt_client_name, config.mqtt_user, config.mqtt_password)) {
       Serial.print("Connected to MQTT broker ");
@@ -1604,7 +1608,7 @@ boolean mqttConnect() {
 void checkMqtt() {
   if (MQTTclient.connected()) {
     MQTTclient.loop();
-    long now = millis();
+    unsigned long now = millis();
     if (now - lastMsg > 2000) {
       lastMsg = now;
       ++value;
@@ -1634,10 +1638,10 @@ void checkSerialCmd() {
 }
 
 boolean executeCommand(String command) {
-  Serial.print("command entered: ");
-  Serial.println(command);
-  if (command.equals("list_ffat")) {
-      listDir(FFat, "/", 0);
+  if (command.equals("list_commands")) {
+    listCmnds();
+  } else if (command.equals("list_ffat")) {
+    listDir(FFat, "/", 0);
   } else if (command.equals("list_sd")) {
     listDir(SD, "/", 0);
   } else if (command.equals("list_keys")) {
@@ -1654,7 +1658,7 @@ boolean executeCommand(String command) {
     keysSDtoFFat();
   } else if (command.equals("copy_config_sd_to_ffat")) {
     configSDtoFFat();
-  } else if (command.equals("read_config")) {
+  } else if (command.equals("show_config")) {
     readFile(FFat, config_filename);
   } else if (command.equals("show_version")) {
     Serial.println(codeVersion);
@@ -1686,6 +1690,13 @@ boolean executeCommand(String command) {
     return false;
   }
   return true;
+}
+
+void listCmnds() {
+  if (MQTTclient.connected()) {
+    MQTTclient.publish(config.mqtt_stat_topic, "add_key_mode\ncopy_config_sd_to_ffat\ncopy_keys_sd_to_ffat\ngarage_close\ngarage_open\ngarage_toggle\nlist_ffat\nlist_keys\nlist_sd\npurge_config\npurge_keys\nrestart\nring_bell\nshow_config\nshow_version\nunlock\nuptime\n");
+  }
+  Serial.printf("add_key_mode\ncopy_config_sd_to_ffat\ncopy_keys_sd_to_ffat\ngarage_close\ngarage_open\ngarage_toggle\nlist_ffat\nlist_keys\nlist_sd\npurge_config\npurge_keys\nrestart\nring_bell\nshow_config\nshow_version\nunlock\nuptime\n");
 }
 
 // --- Web Functions --- Web Functions --- Web Functions --- Web Functions --- Web Functions --- Web Functions ---
@@ -2396,6 +2407,9 @@ void setup() {
     connectWifi();
     startWebServer();
     if (strcmp(config.mqtt_enabled, "true") == 0) {
+      Serial.print("Attempting connection to MQTT broker ");
+      Serial.print(config.mqtt_server);
+      Serial.println("... ");
       mqttConnect();
     }
   } else {
@@ -2434,9 +2448,18 @@ void loop() {
       }
       disconCount = 0;
     } else {
-      //Future - trannsition to millis and use lastWifiConnectAttempt
-      if (disconCount > 100000) {
+      if (millis() > (lastWifiConnectAttempt + wifiReconnectInterval)) {
         disconCount = 0;
+
+        Serial.print("millis: ");
+        Serial.println(millis());
+
+        Serial.print("lastWifiConnectAttempt: ");
+        Serial.println(lastWifiConnectAttempt);
+
+        Serial.print("wifiReconnectInterval: ");
+        Serial.println(wifiReconnectInterval);
+
         Serial.println("WiFi reconnection attempt...");
          connectWifi();
       }
