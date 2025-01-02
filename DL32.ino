@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 02/01/2025
+  Last updated 03/01/2025
   https://github.com/Mark-Roly/DL32/
 
   Board Profile: ESP32S3 Dev Module
@@ -30,7 +30,7 @@
     
 */
 
-#define codeVersion 20250102
+#define codeVersion 20250103
 
 // Include Libraries
 #include <Arduino.h>            // Arduino by Arduino https://github.com/arduino/ArduinoCore-avr/blob/master/cores/arduino
@@ -525,15 +525,15 @@ void sd_setup() {
 }
 
 
-void checkSDPresent(int output) {
+void checkSDPresent(int verbose) {
   if ((SD_present == false) && (digitalRead(SD_CD_PIN) == LOW)) {
     SD_present = true;
-    if (output == 1) {
+    if (verbose == 1) {
       Serial.println("SD Card inserted");
     }
   } else if ((SD_present == true) && (digitalRead(SD_CD_PIN) == HIGH)) {
     SD_present = false;
-    if (output == 1) {
+    if (verbose == 1) {
       Serial.println("SD Card ejected");
     }
   }
@@ -2373,7 +2373,6 @@ void setup() {
   secondTick.attach(1, ISRwatchdog);
   fatfs_setup();
   sd_setup();
-  checkSDPresent(0);
   detectHardwareRevision();
   Serial.print("DL32 firmware version ");
   Serial.println(codeVersion);
@@ -2394,7 +2393,7 @@ void setup() {
   pinMode(DS03, INPUT_PULLUP);
   pinMode(DS04, INPUT_PULLUP);
   digitalWrite(buzzer_pin, LOW);
-
+  checkSDPresent(0);
   // Should load default config if run for the first time
   Serial.println(F("Loading configuration..."));
   loadFSJSON(config_filename, config);
