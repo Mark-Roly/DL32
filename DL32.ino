@@ -2,7 +2,7 @@
 
   DL32 v3 by Mark Booth
   For use with Wemos S3 and DL32 S3 hardware rev 20240812
-  Last updated 07/12/2024
+  Last updated 02/01/2025
   https://github.com/Mark-Roly/DL32/
 
   Board Profile: ESP32S3 Dev Module
@@ -27,28 +27,28 @@
     CMD DI DIN MOSI 36
     CLK SCLK 38
     DAT0 D0 MISO 35
-
+    
 */
 
-#define codeVersion 20241207
+#define codeVersion 20250102
 
 // Include Libraries
-#include <Arduino.h>
-#include <WiFi.h>
-#include <PubSubClient.h>
-#include <Adafruit_NeoPixel.h>
-#include <WebServer.h>
-#include <SPI.h>
+#include <Arduino.h>            // Arduino by Arduino https://github.com/arduino/ArduinoCore-avr/blob/master/cores/arduino
+#include <WiFi.h>               // WiFi by Ivan Grokhotkov https://github.com/espressif/arduino-esp32/blob/master/libraries/WiFi
+#include <WebServer.h>          // WebServer by Ivan Grokhotkov https://github.com/espressif/arduino-esp32/blob/master/libraries/WebServer
+#include <SPI.h>                // SPI by Hristo Gochkov https://github.com/espressif/arduino-esp32/blob/master/libraries/SPI
+#include <LittleFS.h>           // LittleFS by Espressif https://github.com/espressif/arduino-esp32/blob/master/libraries/LittleFS
+#include <PubSubClient.h>       // PubSubClient by Nick O'leary https://github.com/knolleary/pubsubclient
+#include <Adafruit_NeoPixel.h>  // Adafruit_NeoPixel by Adafruit https://github.com/adafruit/Adafruit_NeoPixel
 #include <Wiegand.h>            // YetAnotherArduinoWiegandLibrary by paula-raca https://github.com/paulo-raca/YetAnotherArduinoWiegandLibrary
 #include <ArduinoJson.h>        // ArduinoJSON by Benoit Blanchon https://arduinojson.org/?utm_source=meta&utm_medium=library.properties
-#include <LittleFS.h>
-#include <Ticker.h>
-#include <uri/UriRegex.h>
+#include <Ticker.h>             // Ticker by Bert Melis https://github.com/espressif/arduino-esp32/blob/master/libraries/Ticker
+#include <uri/UriRegex.h>       // UriRegex by espressif https://github.com/espressif/arduino-esp32/blob/master/libraries/WebServer
 #include <uptime_formatter.h>   // Uptime-Library by YiannisBourkelis https://github.com/YiannisBourkelis/Uptime-Library
 #include <ElegantOTA.h>         // ElegantOTA by yushsharma82 https://github.com/ayushsharma82/ElegantOTA
-#include <FS.h>
-#include <FFat.h>
-#include <SD.h>
+#include <FS.h>                 // FS by Ivan Grokhotkov https://github.com/espressif/arduino-esp32/blob/master/libraries/FS
+#include <FFat.h>               // FFAT by espressif https://github.com/espressif/arduino-esp32/blob/master/libraries/FFat
+#include <SD.h>                 // SD by espressif https://github.com/espressif/arduino-esp32/blob/master/libraries/SD
 
 // Hardware Rev 20240812 pins [Since codeVersion 20240819]
 #define buzzer_pin 14
@@ -117,10 +117,9 @@ unsigned long lastMQTTConnectAttempt = 0;
 unsigned long lastWifiConnectAttempt = 0;
 unsigned long wifiReconnectInterval = 60000;
 unsigned long mqttReconnectInterval = 60000;
-char msg[50];
-int value = 0;
 int add_count = 0;
 int seqTmr = 0;
+int hwRev = 0;
 String scannedKey = "";
 String serialCmd;
 
@@ -130,6 +129,7 @@ boolean validKeyRead = false;
 boolean forceOffline = false;
 boolean invalidKeyRead = false;
 boolean SD_present = false;
+boolean SD_mounted = false;
 boolean FFat_present = false;
 boolean doorOpen = true;
 boolean failSecure = true;
@@ -174,7 +174,6 @@ void ISRwatchdog() {
 void onOTAStart() {
   // Log when OTA has started
   Serial.println("OTA update started!");
-  // <Add your own code here>
 }
 
 void onOTAProgress(size_t current, size_t final) {
@@ -192,7 +191,6 @@ void onOTAEnd(bool success) {
   } else {
     Serial.println("There was an error during OTA update!");
   }
-  // <Add your own code here>
 }
 
 // --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions --- Uptime Functions ---
@@ -222,14 +220,14 @@ boolean keyAuthorized(String key) {
     Serial.println(key.length());
   }
   while (keysFile.available()) {
-    int cardDigits = (keysFile.readBytesUntil('\n', keyBuffer, sizeof(keyBuffer))-1);
+    int keyDigits = (keysFile.readBytesUntil('\n', keyBuffer, sizeof(keyBuffer))-1);
     if (verboseScanOutput) {
       Serial.print("card digits = ");
-      Serial.println(String(cardDigits));
-      keyBuffer[cardDigits] = 0;
+      Serial.println(String(keyDigits));
+      keyBuffer[keyDigits] = 0;
     }
     charMatches = 0;
-    for (int loopCount = 0; loopCount < (cardDigits); loopCount++) {
+    for (int loopCount = 0; loopCount < (keyDigits); loopCount++) {
       if (verboseScanOutput) {
         Serial.print("comparing ");
         Serial.print(key[loopCount]);
@@ -243,12 +241,12 @@ boolean keyAuthorized(String key) {
     if (verboseScanOutput) {
       Serial.print("charMatches: ");
       Serial.println(charMatches);
-      Serial.print("cardDigits: ");
-      Serial.println(cardDigits);
+      Serial.print("keyDigits: ");
+      Serial.println(keyDigits);
       Serial.print("Input Key length: ");
       Serial.println(key.length());
     }
-    if ((charMatches == cardDigits)&&(cardDigits == key.length())) {
+    if ((charMatches == keyDigits)&&(keyDigits == key.length())) {
       if (verboseScanOutput) {
         Serial.print(keyBuffer);
         Serial.print(" - ");
@@ -307,14 +305,14 @@ void removeKey(String key) {
   Serial.print("Checking key for removal: ");
   Serial.println(key);
   while (keysFile.available()) {
-    int cardDigits = (keysFile.readBytesUntil('\n', keyBuffer, sizeof(keyBuffer))-1);
+    int keyDigits = (keysFile.readBytesUntil('\n', keyBuffer, sizeof(keyBuffer))-1);
     if (verboseScanOutput) {
-      Serial.print("card digits = ");
-      Serial.println(String(cardDigits));
+      Serial.print("key digits = ");
+      Serial.println(String(keyDigits));
     }
-    keyBuffer[cardDigits] = 0;
+    keyBuffer[keyDigits] = 0;
     charMatches = 0;
-    for (int loopCount = 0; loopCount < (cardDigits); loopCount++) {
+    for (int loopCount = 0; loopCount < (keyDigits); loopCount++) {
       if (verboseScanOutput) {
         Serial.print("comparing ");
         Serial.print(key[loopCount]);
@@ -328,12 +326,12 @@ void removeKey(String key) {
     if (verboseScanOutput) {
       Serial.print("charMatches: ");
       Serial.println(charMatches);
-      Serial.print("cardDigits: ");
-      Serial.println(cardDigits);
+      Serial.print("keyDigits: ");
+      Serial.println(keyDigits);
       Serial.print("Input Key length: ");
       Serial.println(key.length());
     }
-    if ((charMatches == cardDigits)&&(cardDigits == key.length())) {
+    if ((charMatches == keyDigits)&&(keyDigits == key.length())) {
       if (verboseScanOutput) {
         Serial.print(keyBuffer);
         Serial.print(" - ");
@@ -480,7 +478,7 @@ void stateChanged(bool plugged, const char* message) {
   Serial.println(plugged ? "CONNECTED" : "DISCONNECTED");
 }
 
-// IRQ function for reading cards
+// IRQ function for reading keys
 void receivedData(uint8_t* data, uint8_t bits, const char* message) {
   String key = "";
   String key_buff = "";
@@ -523,7 +521,22 @@ void sd_setup() {
     return;
   }
   Serial.println("SD filesystem successfully mounted");
-  SD_present = true;
+  SD_mounted = true;
+}
+
+
+void checkSDPresent(int output) {
+  if ((SD_present == false) && (digitalRead(SD_CD_PIN) == LOW)) {
+    SD_present = true;
+    if (output == 1) {
+      Serial.println("SD Card inserted");
+    }
+  } else if ((SD_present == true) && (digitalRead(SD_CD_PIN) == HIGH)) {
+    SD_present = false;
+    if (output == 1) {
+      Serial.println("SD Card ejected");
+    }
+  }
 }
 
 // --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions --- FATFS Functions ---
@@ -1022,6 +1035,8 @@ void checkAUX() {
       delay(10);
     }
     if (count < 499) {
+      Serial.print("Hardware revision: ");
+      Serial.println(hwRev);
       Serial.print("Code version: ");
       Serial.println(codeVersion);
       Serial.print("SD Card present: ");
@@ -1611,7 +1626,6 @@ void checkMqtt() {
     unsigned long now = millis();
     if (now - lastMsg > 2000) {
       lastMsg = now;
-      ++value;
     }
   }
 }
@@ -1622,6 +1636,18 @@ boolean mqttPublish(char* topic, char* payload) {
     return true;
   } else {
     return false;
+  }
+}
+
+// --- Hardware Revision Functions --- Hardware Revision Functions --- Hardware Revision Functions ---
+
+void detectHardwareRevision() {
+  if ((float)(analogRead(attSensor_pin)/4095*3.3) == 0.00) {
+    hwRev = 20240812;
+    Serial.println("Hardware revision 20240812 detected");
+  } else if ((float)(analogRead(attSensor_pin)/4095*3.3) == 0.29) {
+    hwRev = 20250000;
+    Serial.println("Hardware revision 2025xxxx detected");
   }
 }
 
@@ -2347,6 +2373,8 @@ void setup() {
   secondTick.attach(1, ISRwatchdog);
   fatfs_setup();
   sd_setup();
+  checkSDPresent(0);
+  detectHardwareRevision();
   Serial.print("DL32 firmware version ");
   Serial.println(codeVersion);
   Serial.println("configuring GPIO...");
@@ -2419,8 +2447,8 @@ void setup() {
   pixel.begin();
 
   // instantiate listeners and initialize Wiegand reader, configure pins
-  wiegand.onReceive(receivedData, "Card read: ");
-  wiegand.onReceiveError(receivedDataError, "Card read error: ");
+  wiegand.onReceive(receivedData, "Key read: ");
+  wiegand.onReceiveError(receivedDataError, "Key read error: ");
   wiegand.begin(Wiegand::LENGTH_ANY, true);
   attachInterrupt(digitalPinToInterrupt(wiegand_0_pin), pinStateChanged, CHANGE);
   attachInterrupt(digitalPinToInterrupt(wiegand_1_pin), pinStateChanged, CHANGE);
@@ -2471,13 +2499,14 @@ void loop() {
     checkMqtt();
   }
   
-  //Offline Functions
+  // Offline Functions
   checkKey();
   checkMagSensor();
   checkSerialCmd();
   checkExit();
   checkAUX();
   checkBell();
+  checkSDPresent(1);
   watchdogCount = 0;
   delay(10);
 }
